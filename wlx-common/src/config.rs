@@ -283,6 +283,10 @@ const fn def_point3() -> f32 {
 	0.3
 }
 
+const fn def_gaze_deadzone() -> f32 {
+	0.6
+}
+
 const fn def_point15() -> f32 {
 	0.15
 }
@@ -528,6 +532,22 @@ pub struct GeneralConfig {
 
 	#[serde(default)]
 	pub handsfree_alt_tab: HandsfreeAltTab,
+
+	/// OpenXR only: use eye gaze (XR_EXT_eye_gaze_interaction) as an additional hover pointer.
+	#[serde(default)]
+	pub gaze_pointer: bool,
+
+	/// Gaze dwell-click time in milliseconds. 0 = disabled.
+	#[serde(default)]
+	pub gaze_dwell_ms: u32,
+
+	/// Gaze smoothing, 0.0 (none) to 1.0 (heavy).
+	#[serde(default = "def_half")]
+	pub gaze_smoothing: f32,
+
+	/// Gaze fixation dead zone in degrees. The cursor holds still within this angle.
+	#[serde(default = "def_gaze_deadzone")]
+	pub gaze_deadzone_deg: f32,
 
 	#[serde(default = "def_one")]
 	pub grid_opacity: f32,

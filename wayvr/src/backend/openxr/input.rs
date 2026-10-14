@@ -272,7 +272,55 @@ impl OpenXrInputSource {
             app.session.config.handsfree_pointer = old_handsfree;
         }
 
+        self.update_gaze(xr, app, hmd);
+
         Ok(())
+    }
+
+    /// Locate the eye gaze pose (if enabled and available) and feed it to the gaze pointer.
+    fn update_gaze(&mut self, xr: &XrState, app: &mut AppState, hmd: Affine3A) {
+        let cfg = &app.session.config;
+        if !cfg.gaze_pointer {
+            if app.input_state.gaze.active || app.input_state.gaze.slot.is_some() {
+                app.input_state.gaze.feed(
+                    None,
+                    0.0,
+                    0.0,
+                    0,
+                    Instant::now() + Duration::from_secs(60),
+                );
+            }
+            return;
+        }
+
+        let raw = match self
+            .handsfree_pointer
+            .space
+            .locate(&xr.stage, xr.predicted_display_time)
+        {
+            Ok(loc)
+                if loc
+                    .location_flags
+                    .contains(xr::SpaceLocationFlags::ORIENTATION_VALID) =>
+            {
+                let mut pose = posef_to_transform(&loc.pose);
+                if !loc
+                    .location_flags
+                    .contains(xr::SpaceLocationFlags::POSITION_VALID)
+                {
+                    // eyes are close enough to the head origin
+                    pose.translation = hmd.translation;
+                }
+                Some(pose)
+            }
+            _ => None,
+        };
+
+        let (smoothing, deadzone, dwell) =
+            (cfg.gaze_smoothing, cfg.gaze_deadzone_deg, cfg.gaze_dwell_ms);
+        app.input_state
+            .gaze
+            .feed(raw, smoothing, deadzone, dwell, Instant::now());
     }
 
     fn update_device_battery_status(

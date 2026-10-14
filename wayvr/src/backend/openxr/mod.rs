@@ -138,7 +138,10 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
 
     let mut skybox: Option<Skybox> = None;
 
+    // 2 controller rays + gaze cursor (2 strokes); a 5th covers the handsfree crosshair + ray.
     let pointer_lines = [
+        lines.allocate(&xr_state, &app)?,
+        lines.allocate(&xr_state, &app)?,
         lines.allocate(&xr_state, &app)?,
         lines.allocate(&xr_state, &app)?,
     ];
@@ -341,7 +344,7 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
                 input_source.haptics(&xr_state, idx, haptics);
             }
         }
-        for (idx, line) in current_lines.iter().enumerate() {
+        for (idx, line) in current_lines.iter().enumerate().take(pointer_lines.len()) {
             lines.draw_between(
                 pointer_lines[idx],
                 line.a,

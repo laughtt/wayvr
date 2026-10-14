@@ -12,6 +12,7 @@ use wayvr_ipc::packet_client::{HandsfreeAction, HandsfreeParams};
 use wlx_common::common::LeftRight;
 use wlx_common::windowing::{OverlayWindowState, Positioning};
 
+use crate::backend::gaze::GazeState;
 use crate::backend::task::{InputTask, OverlayTask};
 use crate::overlays::anchor::{ANCHOR_NAME, GRAB_HELP_NAME};
 use crate::overlays::watch::WATCH_NAME;
@@ -72,6 +73,7 @@ pub struct InputState {
     pub pointers: [Pointer; 2],
     pub devices: Vec<TrackedDevice>,
     pub handsfree_state: PointerState,
+    pub gaze: GazeState,
     pub picking_focus: FocusPickState,
     processes: Vec<Child>,
     disable_lerp_until: Instant,
@@ -86,6 +88,7 @@ impl InputState {
             devices: Vec::new(),
             processes: Vec::new(),
             handsfree_state: PointerState::default(),
+            gaze: GazeState::new(),
             picking_focus: FocusPickState::None,
             disable_lerp_until: Instant::now(),
         }
@@ -474,7 +477,131 @@ where
         );
     }
 
+    interact_gaze(overlays, app, lines, &hits);
+
     [hits[0].1, hits[1].1]
+}
+
+/// Swap the gaze pointer state with the controller pointer in `slot`. Calling it twice restores both.
+const fn swap_gaze(app: &mut AppState, slot: usize) {
+    let input = &mut app.input_state;
+    let (p, g) = (&mut input.pointers[slot], &mut input.gaze.ptr);
+    std::mem::swap(&mut p.pose, &mut g.pose);
+    std::mem::swap(&mut p.raw_pose, &mut g.raw_pose);
+    std::mem::swap(&mut p.now, &mut g.now);
+    std::mem::swap(&mut p.before, &mut g.before);
+    std::mem::swap(&mut p.interaction, &mut g.interaction);
+    std::mem::swap(&mut p.tracked, &mut g.tracked);
+    std::mem::swap(&mut p.handsfree, &mut g.handsfree);
+}
+
+/// Stop gaze hovering: send on_left and the click release (if any) to whatever the gaze was on.
+fn release_gaze<O>(overlays: &mut OverlayWindowManager<O>, app: &mut AppState)
+where
+    O: Default,
+{
+    let Some(slot) = app.input_state.gaze.slot.take() else {
+        return;
+    };
+    let gaze = &mut app.input_state.gaze.ptr;
+    gaze.before = gaze.now;
+    gaze.now = PointerState::default();
+    let hovered = gaze.interaction.hovered_id.take();
+    let clicked = gaze.interaction.clicked_id;
+    gaze.interaction.should_block_input = false;
+    gaze.interaction.should_block_poses = false;
+    gaze.interaction.kbd_block_activated = false;
+
+    if hovered.is_none() && clicked.is_none() {
+        return;
+    }
+    // The controller in that slot took over the same overlay this frame: nothing to leave.
+    let ctrl_hover = app.input_state.pointers[slot].interaction.hovered_id;
+    if hovered.is_some() && hovered == ctrl_hover {
+        app.input_state.gaze.ptr.interaction.clicked_id = None;
+        return;
+    }
+    swap_gaze(app, slot);
+    handle_no_hit(slot, hovered, overlays, app);
+    swap_gaze(app, slot);
+}
+
+type HandHit = (Option<(PointerHit, RayHit)>, Option<Haptics>);
+
+fn interact_gaze<O>(
+    overlays: &mut OverlayWindowManager<O>,
+    app: &mut AppState,
+    lines: &mut Vec<PointerLine>,
+    hits: &[HandHit; 2],
+) where
+    O: Default,
+{
+    let input = &app.input_state;
+    let usable = app.session.config.gaze_pointer
+        && input.gaze.active
+        && input.picking_focus.is_none()
+        && !input.pointers.iter().any(|p| p.handsfree);
+
+    // a controller slot is free if its ray hits nothing and it is not grabbing
+    let free = |i: usize| hits[i].0.is_none() && input.pointers[i].interaction.grabbed.is_none();
+    let slot = input
+        .gaze
+        .slot
+        .filter(|&s| free(s))
+        .or_else(|| (0..2).find(|&i| free(i)));
+
+    let Some(slot) = slot.filter(|_| usable) else {
+        release_gaze(overlays, app);
+        app.input_state.gaze.dwell.reset();
+        app.input_state.gaze.last_hit = None;
+        return;
+    };
+
+    if app.input_state.gaze.slot.is_some_and(|s| s != slot) {
+        release_gaze(overlays, app);
+    }
+
+    // "look and click": a controller click that is not aimed at an overlay clicks where we look
+    let input = &app.input_state;
+    let trigger = (0..2).any(|i| input.pointers[i].now.click && hits[i].0.is_none());
+    let dwell_ms = input.gaze.dwell_ms;
+    let last_hit = input.gaze.last_hit;
+    let dwell = app
+        .input_state
+        .gaze
+        .dwell
+        .update(last_hit, Instant::now(), dwell_ms);
+
+    let gaze = &mut app.input_state.gaze.ptr;
+    gaze.before = gaze.now;
+    gaze.now = PointerState::default();
+    gaze.now.click = trigger || dwell;
+    gaze.tracked = true;
+    gaze.handsfree = false;
+    app.input_state.gaze.slot = Some(slot);
+
+    swap_gaze(app, slot);
+    let (hit, _) = interact_hand(slot, overlays, app);
+    swap_gaze(app, slot);
+
+    app.input_state.gaze.last_hit = hit.map(|(h, raw)| (h.overlay, raw.global_pos));
+
+    if let Some((hit, raw_hit)) = hit {
+        // small plus-shaped cursor facing the HMD
+        const HALF_SIZE: f32 = 0.0105;
+        let hmd = &app.input_state.hmd;
+        for axis in [hmd.x_axis, hmd.y_axis] {
+            lines.push(PointerLine {
+                mode: if app.input_state.gaze.ptr.now.click {
+                    PointerMode::Special
+                } else {
+                    hit.mode
+                },
+                a: raw_hit.global_pos - (axis * HALF_SIZE),
+                b: raw_hit.global_pos + (axis * HALF_SIZE),
+            });
+        }
+    }
 }
 
 fn interact_hand<O>(

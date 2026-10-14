@@ -1,3 +1,4 @@
+pub mod gaze;
 pub mod input;
 pub mod playspace_common;
 
