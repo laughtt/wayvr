@@ -229,3 +229,11 @@
 
 ## Fixation dead zone in degrees. The gaze cursor stays still while your gaze moves less than this.
 #gaze_deadzone_deg: 0.6
+
+## OpenXR only. Draw simple semi-transparent hand skeletons (needs XR_EXT_hand_tracking).
+## Hidden while the runtime reports the hand as untracked. Does nothing without hand tracking.
+#show_hands: true
+
+## OpenXR only. Pinch (XR_EXT_hand_interaction) acts as click on overlays, aiming with the hand aim pose.
+## Needs a restart to take effect.
+#hand_pinch_click: true

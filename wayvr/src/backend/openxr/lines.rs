@@ -35,13 +35,16 @@ static LINE_AUTO_INCREMENT: AtomicUsize = AtomicUsize::new(1);
 pub(super) const LINE_WIDTH: f32 = 0.002;
 
 // TODO customizable colors
-static COLORS: [[f32; 4]; 5] = {
+pub(super) const HAND_COLOR: usize = 5;
+
+static COLORS: [[f32; 4]; 6] = {
     [
         [1., 1., 1., 1.],
         [0., 0.375, 0.5, 1.],
         [0.69, 0.188, 0., 1.],
         [0.375, 0., 0.5, 1.],
         [1., 0., 0., 1.],
+        [0.75, 0.85, 1., 0.45],
     ]
 };
 
@@ -199,7 +202,13 @@ impl LinePool {
             line.swapchain.ensure_image_released()?;
 
             if let Some(inner) = line.maybe_line.take() {
+                let flags = if inner.color == HAND_COLOR {
+                    xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA
+                } else {
+                    xr::CompositionLayerFlags::EMPTY
+                };
                 let quad = xr::CompositionLayerQuad::new()
+                    .layer_flags(flags)
                     .pose(inner.pose)
                     .sub_image(line.swapchain.get_subimage(0))
                     .eye_visibility(xr::EyeVisibility::BOTH)

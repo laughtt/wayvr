@@ -35,6 +35,7 @@ use crate::{
 };
 
 mod blocker;
+mod hands;
 mod helpers;
 mod input;
 mod lines;
@@ -146,9 +147,12 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
         lines.allocate(&xr_state, &app)?,
     ];
 
+    let hands_visual = hands::HandsVisual::new(&xr_state, &mut lines, &app);
+
     let watch_id = overlays.lookup(WATCH_NAME).unwrap(); // want panic
 
-    let mut input_source = input::OpenXrInputSource::new(&xr_state)?;
+    let mut input_source =
+        input::OpenXrInputSource::new(&xr_state, app.session.config.hand_pinch_click)?;
 
     let mut session_running = false;
     let mut event_storage = xr::EventDataBuffer::new();
@@ -352,6 +356,10 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
                 line.mode as usize + 1,
                 app.input_state.hmd,
             );
+        }
+
+        if let Some(hv) = hands_visual.as_ref() {
+            hv.update(&xr_state, &app, &mut lines);
         }
 
         app.hid_provider.inner.commit();

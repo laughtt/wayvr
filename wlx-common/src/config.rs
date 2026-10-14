@@ -537,6 +537,14 @@ pub struct GeneralConfig {
 	#[serde(default)]
 	pub gaze_pointer: bool,
 
+	/// OpenXR only: draw simple hands (needs XR_EXT_hand_tracking). Ignored if the runtime has no hand tracking.
+	#[serde(default = "def_true")]
+	pub show_hands: bool,
+
+	/// OpenXR only: pinch (XR_EXT_hand_interaction) clicks overlays. Read at startup.
+	#[serde(default = "def_true")]
+	pub hand_pinch_click: bool,
+
 	/// Gaze dwell-click time in milliseconds. 0 = disabled.
 	#[serde(default)]
 	pub gaze_dwell_ms: u32,

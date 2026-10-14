@@ -170,7 +170,7 @@ pub(super) struct OpenXrHandSource {
 }
 
 impl OpenXrInputSource {
-    pub fn new(xr: &XrState) -> anyhow::Result<Self> {
+    pub fn new(xr: &XrState, pinch_click: bool) -> anyhow::Result<Self> {
         let mut action_set =
             xr.session
                 .instance()
@@ -182,7 +182,7 @@ impl OpenXrInputSource {
 
         let mut hands: [&mut OpenXrHandSource; 3] =
             [&mut left_source, &mut right_source, &mut fallback_source];
-        suggest_bindings(&xr.instance, &mut hands);
+        suggest_bindings(&xr.instance, &mut hands, pinch_click);
 
         xr.session.attach_action_sets(&[&action_set])?;
 
@@ -753,10 +753,25 @@ macro_rules! set_threshold_for {
     };
 }
 
-fn suggest_bindings(instance: &xr::Instance, hands: &mut [&mut OpenXrHandSource; 3]) {
+fn suggest_bindings(
+    instance: &xr::Instance,
+    hands: &mut [&mut OpenXrHandSource; 3],
+    pinch_click: bool,
+) {
     let profiles = load_xr_input_profiles();
 
-    for profile in profiles {
+    for mut profile in profiles {
+        if !pinch_click && profile.profile.ends_with("/hand_interaction_ext") {
+            // keep only the handsfree (eye + pinch) bindings
+            for action in [profile.pose.as_mut(), profile.click.as_mut()]
+                .into_iter()
+                .flatten()
+            {
+                action.left = None;
+                action.right = None;
+            }
+        }
+
         log::debug!("Loading profile {}", profile.profile);
 
         let Ok(profile_path) = instance.string_to_path(&profile.profile) else {
