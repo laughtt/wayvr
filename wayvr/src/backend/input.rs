@@ -1135,7 +1135,34 @@ where
             }
         } else {
             // single grab resize
-            if pointer.now.click {
+            if app.session.config.world_lock_grab {
+                // desk mode: size and distance are independent. stick = size, trigger + stick = distance
+                // (optionally scaling with it to keep the apparent size). exponential, clamped.
+                let cfg = &app.session.config;
+                let (dt, y) = (app.delta_time, pointer.now.scroll_y);
+                if y.is_finite() && y != 0.0 {
+                    let cur_scale = scalar_scale(&overlay_state.transform);
+                    if pointer.now.click {
+                        pointer.interaction.mode = PointerMode::Special;
+                        let len = grab_data.offset.translation.length().max(0.01);
+                        let want = (len * (y * cfg.grab_dist_rate * dt).exp())
+                            .clamp(cfg.grab_dist_min, cfg.grab_dist_max);
+                        grab_data.offset.translation *= want / len;
+                        if cfg.grab_keep_apparent_size {
+                            let f = (cur_scale * want / len).clamp(cfg.grab_size_min, cfg.grab_size_max) / cur_scale;
+                            overlay_state.transform.matrix3 = overlay_state.transform.matrix3.mul_scalar(f);
+                            grab_data.offset.matrix3 = grab_data.offset.matrix3.mul_scalar(f);
+                        }
+                    } else {
+                        pointer.interaction.mode = PointerMode::Special;
+                        let f = (cur_scale * (y * cfg.grab_size_rate * dt).exp())
+                            .clamp(cfg.grab_size_min, cfg.grab_size_max)
+                            / cur_scale;
+                        overlay_state.transform.matrix3 = overlay_state.transform.matrix3.mul_scalar(f);
+                        grab_data.offset.matrix3 = grab_data.offset.matrix3.mul_scalar(f);
+                    }
+                }
+            } else if pointer.now.click {
                 pointer.interaction.mode = PointerMode::Special;
                 let grab_dist = grab_data.offset.translation.length().clamp(0.5, 5.0) * 0.2 + 0.4;
                 handle_scale(

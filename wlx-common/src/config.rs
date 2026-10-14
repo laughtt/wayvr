@@ -267,6 +267,25 @@ const fn def_true() -> bool {
 	true
 }
 
+const fn def_grab_size_rate() -> f32 {
+	0.7
+}
+const fn def_grab_dist_rate() -> f32 {
+	0.8
+}
+const fn def_size_min() -> f32 {
+	0.3
+}
+const fn def_size_max() -> f32 {
+	6.0
+}
+const fn def_dist_min() -> f32 {
+	0.4
+}
+const fn def_dist_max() -> f32 {
+	8.0
+}
+
 const fn def_one() -> f32 {
 	1.0
 }
@@ -413,6 +432,24 @@ pub struct GeneralConfig {
 	/// The `pin` action toggles `grabbable` on the hovered overlay (pinned overlays cannot be grabbed).
 	#[serde(default)]
 	pub world_lock_grab: bool,
+
+	/// With world_lock_grab: while gripping, stick = size, trigger + stick = distance (rates per second, e-fold).
+	#[serde(default = "def_grab_size_rate")]
+	pub grab_size_rate: f32,
+	#[serde(default = "def_grab_dist_rate")]
+	pub grab_dist_rate: f32,
+	/// Changing the distance scales the overlay with it (same apparent size).
+	#[serde(default)]
+	pub grab_keep_apparent_size: bool,
+	/// Overlay width limits in metres (scale) and distance limits in metres.
+	#[serde(default = "def_size_min")]
+	pub grab_size_min: f32,
+	#[serde(default = "def_size_max")]
+	pub grab_size_max: f32,
+	#[serde(default = "def_dist_min")]
+	pub grab_dist_min: f32,
+	#[serde(default = "def_dist_max")]
+	pub grab_dist_max: f32,
 
 	#[serde(default)]
 	pub custom_panels: AStrSet,
