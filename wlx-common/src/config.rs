@@ -405,6 +405,11 @@ pub struct GeneralConfig {
 	#[serde(default)]
 	pub hide_grab_help: bool,
 
+	/// Desk mode: grabbing moves one overlay (never the anchor); on release it becomes Static (world-locked, saved).
+	/// The `pin` action toggles `grabbable` on the hovered overlay (pinned overlays cannot be grabbed).
+	#[serde(default)]
+	pub world_lock_grab: bool,
+
 	#[serde(default)]
 	pub custom_panels: AStrSet,
 

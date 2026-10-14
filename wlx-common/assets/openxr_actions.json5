@@ -121,6 +121,10 @@
       double_click: true,
       left: "/user/hand/left/input/menu/click",
     },
+    pin: {
+      left: "/user/hand/left/input/x/click",
+      right: "/user/hand/right/input/a/click"
+    },
     click_modifier_right: {
       left: "/user/hand/left/input/y/touch",
       right: "/user/hand/right/input/b/touch"

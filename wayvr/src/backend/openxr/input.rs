@@ -162,6 +162,7 @@ pub(super) struct OpenXrHandSource {
     space_drag: CustomClickAction,
     space_rotate: CustomClickAction,
     space_reset: CustomClickAction,
+    pin: CustomClickAction,
     modifier_right: CustomClickAction,
     modifier_middle: CustomClickAction,
     move_mouse: CustomClickAction,
@@ -625,6 +626,8 @@ impl OpenXrPointer {
             .space_reset
             .state(pointer.before.space_reset, xr)?;
 
+        pointer.now.pin = self.source.pin.state(pointer.before.pin, xr)?;
+
         Ok(())
     }
 }
@@ -660,6 +663,7 @@ impl OpenXrHandSource {
             space_drag: CustomClickAction::new(action_set, "space_drag", side)?,
             space_rotate: CustomClickAction::new(action_set, "space_rotate", side)?,
             space_reset: CustomClickAction::new(action_set, "space_reset", side)?,
+            pin: CustomClickAction::new(action_set, "pin", side)?,
             modifier_right: CustomClickAction::new(action_set, "click_modifier_right", side)?,
             modifier_middle: CustomClickAction::new(action_set, "click_modifier_middle", side)?,
             move_mouse: CustomClickAction::new(action_set, "move_mouse", side)?,
@@ -851,6 +855,7 @@ fn suggest_bindings(
             );
 
             add_custom!(profile.space_reset, space_reset, hands, bindings, instance);
+            add_custom!(profile.pin, pin, hands, bindings, instance);
 
             add_custom!(
                 profile.click_modifier_right,
@@ -891,6 +896,7 @@ fn suggest_bindings(
         set_threshold_for!(hands, profile.space_drag, space_drag);
         set_threshold_for!(hands, profile.space_rotate, space_rotate);
         set_threshold_for!(hands, profile.space_reset, space_reset);
+        set_threshold_for!(hands, profile.pin, pin);
         set_threshold_for!(hands, profile.click_modifier_right, modifier_right);
         set_threshold_for!(hands, profile.click_modifier_middle, modifier_middle);
         set_threshold_for!(hands, profile.move_mouse, move_mouse);

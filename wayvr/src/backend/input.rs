@@ -352,6 +352,7 @@ pub struct PointerState {
     pub space_drag: bool,
     pub space_rotate: bool,
     pub space_reset: bool,
+    pub pin: bool,
     pub click_modifier_right: bool,
     pub click_modifier_middle: bool,
     pub move_mouse: bool,
@@ -718,6 +719,31 @@ where
     let grab_float = pointer.now.grab_float;
     let grab_start = pointer.now.grab && !pointer.before.grab;
 
+    // pin / unpin (desk mode): toggles grabbable on the hovered overlay
+    if app.session.config.world_lock_grab
+        && pointer.now.pin
+        && !pointer.before.pin
+        && !matches!(hovered.config.category, OverlayCategory::Internal)
+    {
+        hovered_state.grabbable = !hovered_state.grabbable;
+        hovered.config.dirty = true;
+        log::info!(
+            "Hand {}: {} {}",
+            idx,
+            if hovered_state.grabbable { "unpinned" } else { "pinned" },
+            hovered.config.name
+        );
+        let intensity = if hovered_state.grabbable { 0.2 } else { 0.7 };
+        return (
+            Some((hit, raw_hit)),
+            Some(Haptics {
+                intensity,
+                duration: 0.15,
+                frequency: 0.2,
+            }),
+        );
+    }
+
     // grab
     if grab_start && hovered_state.grabbable {
         update_focus(app, hovered.config.input_focus);
@@ -962,6 +988,7 @@ fn start_grab(par: StartGrabParams) {
     // - not using grab_float
     // - grabbing with one hand. (grabbing with the 2nd hand will grab the individual overlay instead)
     let grab_anchor = !par.edit_mode
+        && !app.session.config.world_lock_grab
         && !par.grab_float
         && !app.anchor_grabbed
         && matches!(state.positioning, Positioning::Anchored);
@@ -1178,7 +1205,18 @@ where
                 *mat = mat.mul_scalar(tgt_scale / cur_scale);
             }
             overlay.config.pause_movement = false;
+            let world_lock = app.session.config.world_lock_grab
+                && !overlay.config.editing
+                && &*overlay.config.name != WATCH_NAME
+                && matches!(
+                    overlay.config.category,
+                    OverlayCategory::Screen | OverlayCategory::Keyboard | OverlayCategory::WayVR
+                );
             if let Some(overlay_state) = overlay.config.active_state.as_mut() {
+                if world_lock {
+                    // released in the room: stays there (stage space) and is saved as such
+                    overlay_state.positioning = Positioning::Static;
+                }
                 window::save_transform(overlay_state, app);
             }
         }
