@@ -387,6 +387,17 @@ pub struct GrabData {
     pub offset: Affine3A,
     pub grabbed_id: OverlayID,
     pub grab_anchor: bool,
+    /// two-hand gesture state (world_lock_grab), kept on the lower-index hand
+    pub two: Option<TwoHand>,
+    /// this hand was part of a two-hand grab and must re-base its offset when alone again
+    pub was_two: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TwoHand {
+    pub v0: Vec3A,
+    pub m0: Vec3A,
+    pub t0: Affine3A,
 }
 
 #[repr(u8)]
@@ -721,6 +732,7 @@ where
 
     // pin / unpin (desk mode): toggles grabbable on the hovered overlay
     if app.session.config.world_lock_grab
+        && app.session.config.world_lock_pin
         && pointer.now.pin
         && !pointer.before.pin
         && !matches!(hovered.config.category, OverlayCategory::Internal)
@@ -1007,6 +1019,8 @@ fn start_grab(par: StartGrabParams) {
         offset,
         grabbed_id: id,
         grab_anchor,
+        two: None,
+        was_two: false,
     });
 
     app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
@@ -1081,10 +1095,64 @@ fn handle_scale(transform: &mut Affine3A, scroll_y: f32) {
 }
 
 #[allow(clippy::too_many_lines)]
+/// Both controllers grip the same overlay: scale follows the hand distance ratio, yaw follows the hand-to-hand
+/// direction, position follows the midpoint. Returns true when handled (the caller skips the single-hand grab).
+fn handle_two_hand<O>(idx: usize, overlay: &mut OverlayWindowData<O>, app: &mut AppState) -> bool
+where
+    O: Default,
+{
+    let ps = &mut app.input_state.pointers;
+    let other = 1 - idx;
+    let (Some(mine), Some(theirs)) = (ps[idx].interaction.grabbed, ps[other].interaction.grabbed) else {
+        return false;
+    };
+    if !(ps[idx].now.grab && ps[other].now.grab) || mine.grabbed_id != theirs.grabbed_id || mine.grab_anchor {
+        return false;
+    }
+    if let Some(g) = ps[idx].interaction.grabbed.as_mut() {
+        g.was_two = true;
+    }
+    if idx != 0 {
+        return true; // hand 0 does the work
+    }
+    let Some(state) = overlay.config.active_state.as_mut() else {
+        return true;
+    };
+    let (pa, pb) = (ps[0].pose.translation, ps[1].pose.translation);
+    let (v, m) = (pb - pa, (pa + pb) * 0.5);
+    let g = ps[0].interaction.grabbed.as_mut().unwrap();
+    let two = *g.two.get_or_insert(TwoHand {
+        v0: v,
+        m0: m,
+        t0: state.transform,
+    });
+    let cfg = &app.session.config;
+    let scale0 = scalar_scale(&two.t0);
+    let d0 = two.v0.length().max(0.02);
+    let scale = (scale0 * v.length() / d0).clamp(cfg.grab_size_min, cfg.grab_size_max);
+    let yaw = |a: Vec3A| a.x.atan2(a.z);
+    let dq = if v.xz().length() > 0.05 && two.v0.xz().length() > 0.05 {
+        glam::Quat::from_rotation_y(yaw(v) - yaw(two.v0))
+    } else {
+        glam::Quat::IDENTITY
+    };
+    let rot0 = glam::Quat::from_mat3a(&two.t0.matrix3.div_scalar(scale0));
+    let pos = m + dq * (two.t0.translation - two.m0);
+    state.transform =
+        Affine3A::from_scale_rotation_translation(glam::Vec3::ONE * scale, dq * rot0, pos.into());
+    overlay.config.pause_movement = true;
+    overlay.config.dirty = true;
+    true
+}
+
 fn handle_grabbed<O>(idx: usize, overlay: &mut OverlayWindowData<O>, app: &mut AppState)
 where
     O: Default,
 {
+    if app.session.config.world_lock_grab && handle_two_hand(idx, overlay, app) {
+        return;
+    }
+
     let pointer = &mut app.input_state.pointers[idx];
     let Some(grab_data) = pointer.interaction.grabbed.as_mut() else {
         log::error!("Grabbed overlay does not exist");
@@ -1136,27 +1204,24 @@ where
         } else {
             // single grab resize
             if app.session.config.world_lock_grab {
-                // desk mode: size and distance are independent. stick = size, trigger + stick = distance
-                // (optionally scaling with it to keep the apparent size). exponential, clamped.
+                // desk mode: stick = push/pull; the size follows (keep apparent size). Resize is the two-hand gesture.
+                if grab_data.was_two {
+                    // second hand let go: continue as a single grab from the current pose
+                    grab_data.was_two = false;
+                    grab_data.two = None;
+                    grab_data.offset = pointer.pose.inverse() * overlay_state.transform;
+                }
                 let cfg = &app.session.config;
                 let (dt, y) = (app.delta_time, pointer.now.scroll_y);
-                if y.is_finite() && y != 0.0 {
+                if y.is_finite() && y.abs() > 0.05 {
+                    pointer.interaction.mode = PointerMode::Special;
                     let cur_scale = scalar_scale(&overlay_state.transform);
-                    if pointer.now.click {
-                        pointer.interaction.mode = PointerMode::Special;
-                        let len = grab_data.offset.translation.length().max(0.01);
-                        let want = (len * (y * cfg.grab_dist_rate * dt).exp())
-                            .clamp(cfg.grab_dist_min, cfg.grab_dist_max);
-                        grab_data.offset.translation *= want / len;
-                        if cfg.grab_keep_apparent_size {
-                            let f = (cur_scale * want / len).clamp(cfg.grab_size_min, cfg.grab_size_max) / cur_scale;
-                            overlay_state.transform.matrix3 = overlay_state.transform.matrix3.mul_scalar(f);
-                            grab_data.offset.matrix3 = grab_data.offset.matrix3.mul_scalar(f);
-                        }
-                    } else {
-                        pointer.interaction.mode = PointerMode::Special;
-                        let f = (cur_scale * (y * cfg.grab_size_rate * dt).exp())
-                            .clamp(cfg.grab_size_min, cfg.grab_size_max)
+                    let len = grab_data.offset.translation.length().max(0.01);
+                    let want = (len * (y * cfg.grab_dist_rate * dt).exp())
+                        .clamp(cfg.grab_dist_min, cfg.grab_dist_max);
+                    grab_data.offset.translation *= want / len;
+                    if cfg.grab_keep_apparent_size {
+                        let f = (cur_scale * want / len).clamp(cfg.grab_size_min, cfg.grab_size_max)
                             / cur_scale;
                         overlay_state.transform.matrix3 = overlay_state.transform.matrix3.mul_scalar(f);
                         grab_data.offset.matrix3 = grab_data.offset.matrix3.mul_scalar(f);
@@ -1180,7 +1245,7 @@ where
                     pointer.now.scroll_y * scroll_factor * 0.02 * grab_dist;
                 grab_data.offset.translation.z = grab_data.offset.translation.z.min(-0.05);
             }
-            if pointer.now.click_modifier_right {
+            if pointer.now.click_modifier_right || app.session.config.world_lock_grab {
                 overlay_state.transform = pointer.pose * grab_data.offset;
             } else {
                 let scale = scalar_scale(&overlay_state.transform);

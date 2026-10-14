@@ -52,6 +52,10 @@ pub fn create_grab_help(app: &mut AppState) -> anyhow::Result<OverlayWindowConfi
     let id_floating = panel.parser_state.data.get_widget_id("grabbing_floating")?;
     let id_follow = panel.parser_state.data.get_widget_id("grabbing_follow")?;
 
+    let id_wl = panel.parser_state.data.get_widget_id("help_wl")?;
+    let id_classic = panel.parser_state.data.get_widget_id("help_classic")?;
+    let id_sep = panel.parser_state.data.get_widget_id("help_sep")?;
+
     let all = [
         id_watch,
         id_static,
@@ -61,12 +65,27 @@ pub fn create_grab_help(app: &mut AppState) -> anyhow::Result<OverlayWindowConfi
         id_follow,
     ];
 
-    panel.on_notify = Some(Box::new(move |panel, _app, event_data| {
+    panel.on_notify = Some(Box::new(move |panel, app, event_data| {
         let mut alterables = EventAlterables::default();
 
         let OverlayEventData::OverlayGrabbed { name, pos, editing } = event_data else {
             return Ok(());
         };
+
+        if app.session.config.world_lock_grab && &*name != WATCH_NAME {
+            // desk mode: one short hint instead of the full help
+            alterables.set_widget_visible(id_wl, true);
+            alterables.set_widget_visible(id_classic, false);
+            alterables.set_widget_visible(id_sep, false);
+            for id in &all {
+                alterables.set_widget_visible(*id, false);
+            }
+            panel.layout.process_alterables(alterables)?;
+            return Ok(());
+        }
+        alterables.set_widget_visible(id_wl, false);
+        alterables.set_widget_visible(id_classic, true);
+        alterables.set_widget_visible(id_sep, true);
 
         let show_id = match pos {
             Positioning::Static => id_static,

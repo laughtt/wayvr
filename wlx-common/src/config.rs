@@ -267,8 +267,8 @@ const fn def_true() -> bool {
 	true
 }
 
-const fn def_grab_size_rate() -> f32 {
-	0.7
+const fn def_true_wl() -> bool {
+	true
 }
 const fn def_grab_dist_rate() -> f32 {
 	0.8
@@ -433,13 +433,15 @@ pub struct GeneralConfig {
 	#[serde(default)]
 	pub world_lock_grab: bool,
 
-	/// With world_lock_grab: while gripping, stick = size, trigger + stick = distance (rates per second, e-fold).
-	#[serde(default = "def_grab_size_rate")]
-	pub grab_size_rate: f32,
+	/// The `pin` action (A/X click) is only active with this (default off).
+	#[serde(default)]
+	pub world_lock_pin: bool,
+
+	/// With world_lock_grab: while gripping, stick = push/pull (rate per second, e-fold); resize = two-hand grip.
 	#[serde(default = "def_grab_dist_rate")]
 	pub grab_dist_rate: f32,
 	/// Changing the distance scales the overlay with it (same apparent size).
-	#[serde(default)]
+	#[serde(default = "def_true_wl")]
 	pub grab_keep_apparent_size: bool,
 	/// Overlay width limits in metres (scale) and distance limits in metres.
 	#[serde(default = "def_size_min")]
