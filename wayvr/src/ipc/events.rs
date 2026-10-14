@@ -146,6 +146,10 @@ where
             WayVRSignal::ShowHide => {
                 app.tasks.enqueue(TaskType::Overlay(OverlayTask::ShowHide));
             }
+            WayVRSignal::ResetScreens => {
+                app.tasks
+                    .enqueue(TaskType::Overlay(OverlayTask::ResetScreens));
+            }
             WayVRSignal::SwitchSet(set) => {
                 app.tasks
                     .enqueue(TaskType::Overlay(OverlayTask::SwitchSet(set)));

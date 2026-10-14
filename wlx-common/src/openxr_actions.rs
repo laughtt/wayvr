@@ -53,6 +53,8 @@ pub struct OpenXrInputProfile {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub pin: Option<OpenXrInputAction>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	pub reset_screens: Option<OpenXrInputAction>,
+	#[serde(skip_serializing_if = "Option::is_none")]
 	pub click_modifier_right: Option<OpenXrInputAction>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub click_modifier_middle: Option<OpenXrInputAction>,

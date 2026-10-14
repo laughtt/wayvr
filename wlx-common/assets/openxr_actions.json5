@@ -125,6 +125,10 @@
       left: "/user/hand/left/input/x/click",
       right: "/user/hand/right/input/a/click"
     },
+    reset_screens: {
+      double_click: true,
+      right: "/user/hand/right/input/b/click"
+    },
     click_modifier_right: {
       left: "/user/hand/left/input/y/touch",
       right: "/user/hand/right/input/b/touch"

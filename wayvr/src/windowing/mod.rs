@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::windowing::window::scalar_scale;
 
 pub mod backend;
+pub mod grabmath;
 pub mod manager;
 pub mod set;
 pub mod window;

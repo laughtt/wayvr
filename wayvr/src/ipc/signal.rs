@@ -6,6 +6,7 @@ pub enum WayVRSignal {
     SwitchSet(Option<usize>),
     Handsfree(wayvr_ipc::packet_client::HandsfreeParams),
     ShowHide,
+    ResetScreens,
     CustomTask(crate::backend::task::ModifyPanelTask),
     WindowVisibilityChanged(window::WindowHandle, bool),
 }

@@ -437,6 +437,9 @@ impl Connection {
             PacketClient::WlxShowHide => {
                 Self::handle_wlx_show_hide(params);
             }
+            PacketClient::WlxResetScreens => {
+                params.signals.send(WayVRSignal::ResetScreens);
+            }
             PacketClient::WlxSwitchSet(set) => {
                 Self::handle_wlx_switch_set(params, set);
             }

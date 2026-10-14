@@ -303,6 +303,15 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
             .input_state
             .pointers
             .iter()
+            .any(|p| p.now.reset_screens && !p.before.reset_screens)
+        {
+            app.tasks.enqueue(TaskType::Overlay(OverlayTask::ResetScreens));
+        }
+
+        if app
+            .input_state
+            .pointers
+            .iter()
             .any(|p| p.now.toggle_dashboard && !p.before.toggle_dashboard)
         {
             app.tasks

@@ -129,6 +129,7 @@ pub enum OverlayTask {
     ToggleEditMode,
     ToggleDashboard,
     ShowHide,
+    ResetScreens,
     CleanupOverlays(OverlayCategory),
     GlobalChange(GlobalChange),
     Modify(OverlaySelector, Box<ModifyOverlayTask>),

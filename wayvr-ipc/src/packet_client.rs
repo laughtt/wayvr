@@ -97,4 +97,6 @@ pub enum PacketClient {
 	WlxShowHide,
 	WlxSwitchSet(Option<usize>),
 	WlxHandsfree(HandsfreeParams),
+	/// Put all screens back in front of the head (appended last: no protocol bump needed)
+	WlxResetScreens,
 }

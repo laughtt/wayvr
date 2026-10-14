@@ -92,6 +92,8 @@ pub struct OverlayWindowConfig {
     pub resizing: bool,
     /// Used by grab to pause following of HMD or other devices
     pub pause_movement: bool,
+    /// seconds a world-locked screen has been out of view (desk mode auto-recovery)
+    pub out_of_view_s: f32,
 }
 
 impl OverlayWindowConfig {
@@ -113,6 +115,7 @@ impl OverlayWindowConfig {
             editing: false,
             resizing: false,
             pause_movement: false,
+            out_of_view_s: 0.0,
         }
     }
 
@@ -137,8 +140,62 @@ impl OverlayWindowConfig {
     }
 
     pub fn tick(&mut self, app: &mut AppState) {
+        if app.session.config.world_lock_grab {
+            self.auto_recover(app);
+        }
         self.auto_movement(app);
         self.angle_fade(app);
+    }
+
+    /// Desk mode: a world-locked screen that is unusable (bad transform, no pose, too close/far, scale out of limits,
+    /// or out of view for 10 s with no grab) goes back to the default position in front of the head.
+    fn auto_recover(&mut self, app: &mut AppState) {
+        use crate::windowing::grabmath;
+        if self.pause_movement
+            || self.editing
+            || !matches!(
+                self.category,
+                OverlayCategory::Screen | OverlayCategory::Mirror | OverlayCategory::WayVR
+            )
+        {
+            return;
+        }
+        let Some(state) = self.active_state.as_mut() else {
+            return;
+        };
+        if !matches!(state.positioning, Positioning::Static) {
+            return;
+        }
+        let cfg = &app.session.config;
+        let lim = grabmath::Limits {
+            size_min: cfg.grab_size_min,
+            size_max: cfg.grab_size_max,
+            dist_min: cfg.grab_dist_min,
+            dist_max: cfg.grab_dist_max,
+        };
+        let hmd = app.input_state.hmd;
+        let mut reason = if state.saved_transform.is_none() {
+            Some("no saved pose")
+        } else {
+            grabmath::invalid_reason(&state.transform, &hmd, &lim)
+        };
+        if reason.is_none() {
+            if grabmath::view_angle_deg(&state.transform, &hmd) > 80.0 {
+                self.out_of_view_s += app.delta_time;
+                if self.out_of_view_s > 10.0 {
+                    reason = Some("out of view for more than 10 s");
+                }
+            } else {
+                self.out_of_view_s = 0.0;
+            }
+        }
+        if let Some(reason) = reason {
+            log::warn!("auto-reset {}: {reason}", self.name);
+            state.transform = grabmath::default_front(&hmd, 0);
+            save_transform(state, app);
+            self.out_of_view_s = 0.0;
+            self.dirty = true;
+        }
     }
 
     fn auto_movement(&mut self, app: &mut AppState) {

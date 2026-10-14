@@ -20,6 +20,7 @@ use crate::state::{AppSession, AppState};
 use crate::subsystem::hid::WheelDelta;
 use crate::subsystem::input::InputFocus;
 use crate::windowing::backend::OverlayEventData;
+use crate::windowing::grabmath;
 use crate::windowing::manager::OverlayWindowManager;
 use crate::windowing::window::{self, OverlayCategory, OverlayWindowData, realign, scalar_scale};
 use crate::windowing::{OverlayID, OverlaySelector};
@@ -353,6 +354,7 @@ pub struct PointerState {
     pub space_rotate: bool,
     pub space_reset: bool,
     pub pin: bool,
+    pub reset_screens: bool,
     pub click_modifier_right: bool,
     pub click_modifier_middle: bool,
     pub move_mouse: bool,
@@ -1097,6 +1099,15 @@ fn handle_scale(transform: &mut Affine3A, scroll_y: f32) {
 #[allow(clippy::too_many_lines)]
 /// Both controllers grip the same overlay: scale follows the hand distance ratio, yaw follows the hand-to-hand
 /// direction, position follows the midpoint. Returns true when handled (the caller skips the single-hand grab).
+fn grab_limits(cfg: &wlx_common::config::GeneralConfig) -> grabmath::Limits {
+    grabmath::Limits {
+        size_min: cfg.grab_size_min,
+        size_max: cfg.grab_size_max,
+        dist_min: cfg.grab_dist_min,
+        dist_max: cfg.grab_dist_max,
+    }
+}
+
 fn handle_two_hand<O>(idx: usize, overlay: &mut OverlayWindowData<O>, app: &mut AppState) -> bool
 where
     O: Default,
@@ -1126,20 +1137,7 @@ where
         m0: m,
         t0: state.transform,
     });
-    let cfg = &app.session.config;
-    let scale0 = scalar_scale(&two.t0);
-    let d0 = two.v0.length().max(0.02);
-    let scale = (scale0 * v.length() / d0).clamp(cfg.grab_size_min, cfg.grab_size_max);
-    let yaw = |a: Vec3A| a.x.atan2(a.z);
-    let dq = if v.xz().length() > 0.05 && two.v0.xz().length() > 0.05 {
-        glam::Quat::from_rotation_y(yaw(v) - yaw(two.v0))
-    } else {
-        glam::Quat::IDENTITY
-    };
-    let rot0 = glam::Quat::from_mat3a(&two.t0.matrix3.div_scalar(scale0));
-    let pos = m + dq * (two.t0.translation - two.m0);
-    state.transform =
-        Affine3A::from_scale_rotation_translation(glam::Vec3::ONE * scale, dq * rot0, pos.into());
+    state.transform = grabmath::two_hand(&two.t0, two.v0, two.m0, v, m, &grab_limits(&app.session.config));
     overlay.config.pause_movement = true;
     overlay.config.dirty = true;
     true
@@ -1212,20 +1210,21 @@ where
                     grab_data.offset = pointer.pose.inverse() * overlay_state.transform;
                 }
                 let cfg = &app.session.config;
+                let lim = grab_limits(cfg);
                 let (dt, y) = (app.delta_time, pointer.now.scroll_y);
                 if y.is_finite() && y.abs() > 0.05 {
                     pointer.interaction.mode = PointerMode::Special;
-                    let cur_scale = scalar_scale(&overlay_state.transform);
-                    let len = grab_data.offset.translation.length().max(0.01);
-                    let want = (len * (y * cfg.grab_dist_rate * dt).exp())
-                        .clamp(cfg.grab_dist_min, cfg.grab_dist_max);
-                    grab_data.offset.translation *= want / len;
-                    if cfg.grab_keep_apparent_size {
-                        let f = (cur_scale * want / len).clamp(cfg.grab_size_min, cfg.grab_size_max)
-                            / cur_scale;
-                        overlay_state.transform.matrix3 = overlay_state.transform.matrix3.mul_scalar(f);
-                        grab_data.offset.matrix3 = grab_data.offset.matrix3.mul_scalar(f);
-                    }
+                    let cur_scale = grabmath::uniform_scale(&overlay_state.transform);
+                    let f = grabmath::push_pull(
+                        &mut grab_data.offset,
+                        cur_scale,
+                        y,
+                        dt,
+                        cfg.grab_dist_rate,
+                        cfg.grab_keep_apparent_size,
+                        &lim,
+                    );
+                    overlay_state.transform.matrix3 = overlay_state.transform.matrix3.mul_scalar(f);
                 }
             } else if pointer.now.click {
                 pointer.interaction.mode = PointerMode::Special;

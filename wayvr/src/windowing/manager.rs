@@ -9,6 +9,7 @@ use glam::{Affine3A, Vec3, Vec3A};
 use slotmap::{Key, SecondaryMap, SlotMap};
 use wgui::{i18n::Translation, log::LogErr};
 use wlx_common::{
+    windowing::Positioning,
     astr_containers::{AStrMap, AStrMapExt},
     config::SerializedWindowSet,
     overlays::{BackendAttrib, BackendAttribValue, ToastTopic},
@@ -33,10 +34,11 @@ use crate::{
     windowing::{
         OverlayID, OverlaySelector,
         backend::{OverlayEventData, OverlayMeta},
+        grabmath,
         set::OverlayWindowSet,
         snap_upright,
         window::{
-            OverlayCategory, OverlayWindowData, save_transform, scalar_scale,
+            self, OverlayCategory, OverlayWindowData, save_transform, scalar_scale,
             spawn_transform_from_parent,
         },
     },
@@ -202,6 +204,7 @@ where
     pub fn handle_task(&mut self, app: &mut AppState, task: OverlayTask) -> anyhow::Result<()> {
         match task {
             OverlayTask::ShowHide => self.show_hide(app),
+            OverlayTask::ResetScreens => self.reset_screens(app),
             OverlayTask::ToggleSet(set) => {
                 self.switch_or_toggle_set(app, set);
             }
@@ -598,12 +601,43 @@ impl<T> OverlayWindowManager<T> {
             }
         }
 
+        Self::sanitize_saved(app);
+
         if restore_after {
             self.switch_to_set(app, Some(self.restore_set), true);
         }
     }
 
+    /// Desk mode: repair or drop saved world-locked poses (skew, scale, distance); a dropped pose is replaced by the
+    /// default position in front when the overlay is live (see `OverlayWindowConfig::auto_recover`).
+    fn sanitize_saved(app: &mut AppState) {
+        if !app.session.config.world_lock_grab {
+            return;
+        }
+        let cfg = &app.session.config;
+        let lim = grabmath::Limits {
+            size_min: cfg.grab_size_min,
+            size_max: cfg.grab_size_max,
+            dist_min: cfg.grab_dist_min,
+            dist_max: cfg.grab_dist_max,
+        };
+        for set in &mut app.session.config.sets {
+            for st in set.overlays.values_mut().chain(set.hidden_overlays.values_mut()) {
+                if !matches!(st.positioning, Positioning::Static) {
+                    continue;
+                }
+                if let Some(t) = st.saved_transform {
+                    st.saved_transform = grabmath::sanitize_static(&t, &lim);
+                    if st.saved_transform.is_none() {
+                        log::warn!("saved Static pose invalid ({t:?}): dropped");
+                    }
+                }
+            }
+        }
+    }
+
     pub fn restore_layout(&mut self, app: &mut AppState) {
+        Self::sanitize_saved(app);
         if app.session.config.sets.is_empty() {
             // keep defaults
             return;
@@ -1096,6 +1130,30 @@ impl<T> OverlayWindowManager<T> {
             let _ = self
                 .visible_overlays_changed(app)
                 .inspect_err(|e| log::error!("VisibleOverlaysChanged: {e:?}"));
+        }
+    }
+
+    /// Puts every active screen back in front of the head as a world-locked (Static) overlay.
+    pub fn reset_screens(&mut self, app: &mut AppState) {
+        let hmd = app.input_state.hmd;
+        let mut slot = 0;
+        for o in self.overlays.values_mut() {
+            if !matches!(
+                o.config.category,
+                OverlayCategory::Screen | OverlayCategory::Mirror | OverlayCategory::WayVR
+            ) {
+                continue;
+            }
+            let Some(state) = o.config.active_state.as_mut() else {
+                continue;
+            };
+            log::info!("reset screens: {} -> default position (slot {slot})", o.config.name);
+            state.positioning = Positioning::Static;
+            state.transform = grabmath::default_front(&hmd, slot);
+            window::save_transform(state, app);
+            o.config.dirty = true;
+            o.config.out_of_view_s = 0.0;
+            slot += 1;
         }
     }
 

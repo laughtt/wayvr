@@ -173,6 +173,14 @@ pub async fn wlx_show_hide(state: &mut WayVRClientState) {
     )
 }
 
+pub async fn wlx_reset_screens(state: &mut WayVRClientState) {
+    handle_empty_result(
+        WayVRClient::fn_wlx_reset_screens(state.wayvr_client.clone())
+            .await
+            .context("failed to reset screens"),
+    )
+}
+
 pub async fn wlx_switch_set(state: &mut WayVRClientState, set: Option<usize>) {
     handle_empty_result(
         WayVRClient::fn_wlx_switch_set(state.wayvr_client.clone(), set)
