@@ -65,12 +65,16 @@ pub fn create_custom(app: &mut AppState, name: Arc<str>) -> Option<OverlayWindow
         }
     }));
 
+    // "captions": voice caption strip, placed under the main screen by ipc::events (not pointable, not grabbable)
+    let captions = name.as_ref() == crate::ipc::events::CAPTIONS_NAME;
+
     Some(OverlayWindowConfig {
         name,
         category: OverlayCategory::Panel,
+        show_on_spawn: captions,
         default_state: OverlayWindowState {
-            interactable: true,
-            grabbable: true,
+            interactable: !captions,
+            grabbable: !captions,
             transform: Affine3A::from_scale_rotation_translation(
                 Vec3::ONE * scale,
                 Quat::IDENTITY,

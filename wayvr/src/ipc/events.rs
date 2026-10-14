@@ -30,6 +30,97 @@ fn process_tick_tasks(
     }
 }
 
+/// Name of the custom panel (`custom_panels: [captions]`, `gui/captions.xml`) kept under the main screen.
+pub const CAPTIONS_NAME: &str = "captions";
+
+/// Desk-mode housekeeping every tick: keep the keyboard hidden when `enable_keyboard: false`, and put the
+/// "captions" panel just below the main screen (same orientation, 90% of its width) so it follows when it is moved.
+/// The main screen is the first active screen, or the overlay named in `PIMAX_CAPTIONS_SCREEN`.
+fn desk_housekeeping<O>(app: &mut AppState, overlays: &mut OverlayWindowManager<O>)
+where
+    O: Default,
+{
+    use crate::windowing::window::OverlayCategory;
+    use glam::{Affine3A, Mat3A, Vec3A};
+
+    if !app.session.config.enable_keyboard {
+        for o in overlays.values_mut() {
+            if o.config.category == OverlayCategory::Keyboard && o.config.is_active() {
+                o.config.deactivate();
+            }
+        }
+    }
+
+    let Some(cap_id) = overlays.lookup(CAPTIONS_NAME) else {
+        return;
+    };
+    if !overlays.mut_by_id(cap_id).is_some_and(|c| c.config.is_active()) {
+        return;
+    }
+    let want = std::env::var("PIMAX_CAPTIONS_SCREEN").ok();
+    let screen_id = overlays
+        .iter()
+        .find(|(_, o)| {
+            o.config.is_active()
+                && matches!(o.config.category, OverlayCategory::Screen | OverlayCategory::WayVR)
+                && want.as_deref().is_none_or(|w| o.config.name.as_ref() == w)
+        })
+        .map(|(id, _)| id);
+    let Some(screen_id) = screen_id else {
+        return;
+    };
+
+    // displayed (width, height) in metres of a quad, as the OpenXR backend computes it
+    fn quad(t: &Affine3A, extent: [u32; 2]) -> Option<(f32, f32)> {
+        if extent[0] == 0 || extent[1] == 0 {
+            return None;
+        }
+        let aspect = extent[0] as f32 / extent[1] as f32;
+        Some(if aspect < 1.0 {
+            let major = t.matrix3.col(0).length();
+            (major * aspect, major)
+        } else {
+            let major = t.matrix3.col(1).length();
+            (major, major / aspect)
+        })
+    }
+
+    let Some((st, s_w, s_h)) = overlays.mut_by_id(screen_id).and_then(|s| {
+        let st = s.config.active_state.as_ref()?.transform;
+        let meta = s.config.backend.frame_meta()?;
+        let (w, h) = quad(&(st * meta.transform), meta.extent)?;
+        Some((st, w, h))
+    }) else {
+        return;
+    };
+
+    let Some(cap) = overlays.mut_by_id(cap_id) else {
+        return;
+    };
+    let Some(meta) = cap.config.backend.frame_meta() else {
+        return;
+    };
+    let aspect = meta.extent[0] as f32 / meta.extent[1].max(1) as f32;
+    let k = meta.transform.matrix3.col(1).length();
+    if aspect < 1.0 || k <= 0.0 || s_w <= 0.0 {
+        return;
+    }
+    let c_w = s_w * 0.9;
+    let c_h = c_w / aspect;
+    let scale = c_w / k;
+    let right = st.matrix3.x_axis.normalize_or_zero();
+    let up = st.matrix3.y_axis.normalize_or_zero();
+    let fwd = st.matrix3.z_axis.normalize_or_zero();
+    let centre = st.translation - up * (s_h * 0.5 + 0.03 + c_h * 0.5);
+    if let Some(state) = cap.config.active_state.as_mut() {
+        state.transform = Affine3A {
+            matrix3: Mat3A::from_cols(right * scale, up * scale, fwd * scale),
+            translation: Vec3A::from(centre),
+        };
+        cap.config.dirty = true;
+    }
+}
+
 pub fn tick_events<O>(
     app: &mut AppState,
     _overlays: &mut OverlayWindowManager<O>,
@@ -37,6 +128,8 @@ pub fn tick_events<O>(
 where
     O: Default,
 {
+    desk_housekeeping(app, _overlays);
+
     while let Some(signal) = app.wayvr_signals.read() {
         match signal {
             WayVRSignal::WindowVisibilityChanged(window_handle, visible) => {

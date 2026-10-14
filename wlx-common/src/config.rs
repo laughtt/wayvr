@@ -399,6 +399,10 @@ pub struct GeneralConfig {
 	#[serde(default = "def_true")]
 	pub enable_watch: bool,
 
+	/// false: the keyboard overlay is never shown (desk mode with voice captions)
+	#[serde(default = "def_true")]
+	pub enable_keyboard: bool,
+
 	#[serde(default)]
 	pub sets_on_watch: bool,
 
