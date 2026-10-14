@@ -33,8 +33,11 @@ use super::{
 
 static LINE_AUTO_INCREMENT: AtomicUsize = AtomicUsize::new(1);
 pub(super) const LINE_WIDTH: f32 = 0.002;
+/// Hand strokes are wider than pointer rays: 2 mm at arm's length is a few pixels and vanishes in the lens periphery.
+pub(super) const HAND_LINE_WIDTH: f32 = 0.006;
 
 // TODO customizable colors
+/// Opaque amber: stands out on the grey passthrough image and on the blue panels (the old 45 % light blue did not).
 pub(super) const HAND_COLOR: usize = 5;
 
 static COLORS: [[f32; 4]; 6] = {
@@ -44,7 +47,7 @@ static COLORS: [[f32; 4]; 6] = {
         [0.69, 0.188, 0., 1.],
         [0.375, 0., 0.5, 1.],
         [1., 0., 0., 1.],
-        [0.75, 0.85, 1., 0.45],
+        [1., 0.62, 0.12, 1.],
     ]
 };
 
@@ -107,6 +110,19 @@ impl LinePool {
         color: usize,
         hmd: Affine3A,
     ) {
+        self.draw_between_width(id, start, end, color, hmd, LINE_WIDTH);
+    }
+
+    /// [`Self::draw_between`] with a stroke width (m).
+    pub(super) fn draw_between_width(
+        &mut self,
+        id: usize,
+        start: Vec3A,
+        end: Vec3A,
+        color: usize,
+        hmd: Affine3A,
+        width: f32,
+    ) {
         let dir = end - start;
         let len = dir.length();
 
@@ -158,6 +174,7 @@ impl LinePool {
             color,
             pose: posef,
             length: len,
+            width,
         });
     }
 
@@ -202,7 +219,7 @@ impl LinePool {
             line.swapchain.ensure_image_released()?;
 
             if let Some(inner) = line.maybe_line.take() {
-                let flags = if inner.color == HAND_COLOR {
+                let flags = if COLORS[inner.color][3] < 1.0 {
                     xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA
                 } else {
                     xr::CompositionLayerFlags::EMPTY
@@ -214,7 +231,7 @@ impl LinePool {
                     .eye_visibility(xr::EyeVisibility::BOTH)
                     .space(&xr.stage)
                     .size(xr::Extent2Df {
-                        width: LINE_WIDTH,
+                        width: inner.width,
                         height: inner.length,
                     });
 
@@ -230,6 +247,7 @@ pub(super) struct Line {
     pub(super) color: usize,
     pub(super) pose: xr::Posef,
     pub(super) length: f32,
+    pub(super) width: f32,
 }
 
 struct LineContainer {

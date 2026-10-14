@@ -1,5 +1,6 @@
-//! Simple hand skeletons from XR_EXT_hand_tracking, drawn with the line pool (flat semi-transparent
-//! strokes: one per finger, plus two across the palm).
+//! Simple hand skeletons from XR_EXT_hand_tracking, drawn with the line pool (flat opaque strokes: two per
+//! finger so a curl shows as a bend, plus two across the palm). Wider and in a stronger colour than the pointer rays:
+//! the first version (2 mm, 45 % light blue) was hard to see even where the hands were in view.
 
 use std::{cell::Cell, time::Instant};
 
@@ -9,19 +10,24 @@ use openxr as xr;
 use super::{
     XrState,
     helpers::posef_to_transform,
-    lines::{HAND_COLOR, LinePool},
+    lines::{HAND_COLOR, HAND_LINE_WIDTH, LinePool},
 };
 use crate::state::AppState;
 
 /// (from, to) joint indices (XR_EXT_hand_tracking order) of each stroke.
-const STROKES: [(usize, usize); 7] = [
-    (3, 5),   // thumb proximal -> tip
-    (7, 10),  // index
-    (12, 15), // middle
-    (17, 20), // ring
-    (22, 25), // little
-    (1, 12),  // wrist -> middle proximal (palm length)
-    (7, 22),  // index proximal -> little proximal (palm width)
+const STROKES: [(usize, usize); 12] = [
+    (3, 4),   // thumb proximal -> distal
+    (4, 5),   // thumb distal -> tip
+    (7, 8),   // index proximal -> intermediate
+    (8, 10),  // index intermediate -> tip
+    (12, 13), // middle
+    (13, 15),
+    (17, 18), // ring
+    (18, 20),
+    (22, 23), // little
+    (23, 25),
+    (1, 12), // wrist -> middle proximal (palm length)
+    (7, 22), // index proximal -> little proximal (palm width)
 ];
 const STROKE_COUNT: usize = STROKES.len();
 
@@ -113,7 +119,14 @@ impl HandsVisual {
             ok += 1;
             hand.seen.set((n, act, ok));
             for (i, &id) in hand.lines.iter().enumerate() {
-                lines.draw_between(id, p[i * 2], p[i * 2 + 1], HAND_COLOR, app.input_state.hmd);
+                lines.draw_between_width(
+                    id,
+                    p[i * 2],
+                    p[i * 2 + 1],
+                    HAND_COLOR,
+                    app.input_state.hmd,
+                    HAND_LINE_WIDTH,
+                );
             }
         }
 
