@@ -458,13 +458,33 @@ pub fn interact<O>(
 where
     O: Default,
 {
+    // gaze has priority: controllers do not hover (unless they hold a grab)
+    let gaze_first = {
+        let input = &app.input_state;
+        app.session.config.gaze_pointer
+            && app.session.config.gaze_over_controllers
+            && input.gaze.active
+            && input.picking_focus.is_none()
+            && !input.pointers.iter().any(|p| p.handsfree)
+    };
+    let hand = |idx: usize, overlays: &mut OverlayWindowManager<O>, app: &mut AppState| {
+        if gaze_first && app.input_state.pointers[idx].interaction.grabbed.is_none() {
+            let pointer = &mut app.input_state.pointers[idx];
+            let pending_haptics = pointer.pending_haptics.take();
+            let hovered = pointer.interaction.hovered_id.take();
+            handle_no_hit(idx, hovered, overlays, app);
+            (None, pending_haptics)
+        } else {
+            interact_hand(idx, overlays, app)
+        }
+    };
     let hits = if app.input_state.pointers[1].last_click > app.input_state.pointers[0].last_click {
-        let right = interact_hand(1, overlays, app);
-        let left = interact_hand(0, overlays, app);
+        let right = hand(1, overlays, app);
+        let left = hand(0, overlays, app);
         [left, right]
     } else {
-        let left = interact_hand(0, overlays, app);
-        let right = interact_hand(1, overlays, app);
+        let left = hand(0, overlays, app);
+        let right = hand(1, overlays, app);
         [left, right]
     };
 

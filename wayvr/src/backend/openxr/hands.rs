@@ -1,6 +1,8 @@
 //! Simple hand skeletons from XR_EXT_hand_tracking, drawn with the line pool (flat semi-transparent
 //! strokes: one per finger, plus two across the palm).
 
+use std::{cell::Cell, time::Instant};
+
 use glam::Vec3A;
 use openxr as xr;
 
@@ -24,12 +26,15 @@ const STROKES: [(usize, usize); 7] = [
 const STROKE_COUNT: usize = STROKES.len();
 
 struct Hand {
+    /// frames in the current diagnostics window: (located, active, all joints valid)
+    seen: Cell<(u32, u32, u32)>,
     tracker: xr::HandTracker,
     lines: [usize; STROKE_COUNT],
 }
 
 pub(super) struct HandsVisual {
     hands: Vec<Hand>,
+    log_since: Cell<Option<Instant>>,
 }
 
 /// Joint positions of a located hand, or `None` if any joint we need is not valid.
@@ -73,12 +78,16 @@ impl HandsVisual {
                 *id = lines.allocate(xr, app).ok()?;
             }
             hands.push(Hand {
+                seen: Cell::new((0, 0, 0)),
                 tracker,
                 lines: ids,
             });
         }
         log::info!("Hand tracking enabled, drawing hands.");
-        Some(Self { hands })
+        Some(Self {
+            hands,
+            log_since: Cell::new(None),
+        })
     }
 
     /// Locate joints at the predicted display time and queue the strokes for this frame.
@@ -87,18 +96,39 @@ impl HandsVisual {
             return;
         }
         for hand in &self.hands {
+            let (mut n, mut act, mut ok) = hand.seen.get();
+            n += 1;
             let Ok(Some(joints)) = xr
                 .stage
                 .locate_hand_joints(&hand.tracker, xr.predicted_display_time)
             else {
+                hand.seen.set((n, act, ok));
                 continue; // inactive: hide
             };
+            act += 1;
             let Some(p) = joint_positions(&joints) else {
+                hand.seen.set((n, act, ok));
                 continue; // invalid: hide
             };
+            ok += 1;
+            hand.seen.set((n, act, ok));
             for (i, &id) in hand.lines.iter().enumerate() {
                 lines.draw_between(id, p[i * 2], p[i * 2 + 1], HAND_COLOR, app.input_state.hmd);
             }
+        }
+
+        let now = Instant::now();
+        let since = self.log_since.get().unwrap_or(now);
+        self.log_since.set(Some(since));
+        if now.duration_since(since).as_secs() >= 5 {
+            for (i, hand) in self.hands.iter().enumerate() {
+                let (n, act, ok) = hand.seen.replace((0, 0, 0));
+                log::info!(
+                    "hand {}: {n} frames, runtime-active {act}, joints valid (drawn) {ok}",
+                    if i == 0 { "left" } else { "right" }
+                );
+            }
+            self.log_since.set(Some(now));
         }
     }
 }

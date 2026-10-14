@@ -217,6 +217,10 @@
 ## Does nothing if the runtime has no eye tracking.
 #gaze_pointer: false
 
+## Gaze has priority over controller rays while gaze is valid: controllers do not hover/point, a controller
+## trigger clicks where you look. Use when controller rays always sit on the overlays (e.g. fixed controller poses).
+#gaze_over_controllers: false
+
 ## Gaze dwell-click: keep looking at the same spot for this many milliseconds to click.
 ## 0 → disabled
 #gaze_dwell_ms: 0

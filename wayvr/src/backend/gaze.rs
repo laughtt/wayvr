@@ -148,7 +148,20 @@ impl Dwell {
     }
 }
 
+/// Counters for the periodic diagnostics line.
+#[derive(Debug, Default)]
+pub struct GazeStats {
+    pub frames: u32,
+    /// located with a valid orientation
+    pub located: u32,
+    /// accepted by `feed` (finite, not frozen)
+    pub fed_ok: u32,
+    pub last_flags: u32,
+    pub since: Option<Instant>,
+}
+
 pub struct GazeState {
+    pub stats: GazeStats,
     /// Virtual pointer holding gaze pose / click / hover state. Swapped into a free controller slot
     /// while interacting.
     pub ptr: Pointer,
@@ -170,6 +183,7 @@ pub struct GazeState {
 impl GazeState {
     pub fn new() -> Self {
         Self {
+            stats: GazeStats::default(),
             ptr: Pointer::new(0),
             slot: None,
             active: false,
@@ -245,6 +259,7 @@ impl GazeState {
         }
         self.last_raw = Some((rot, pos));
         self.last_valid = Some(now);
+        self.stats.fed_ok += 1;
 
         let dt = self
             .last_feed

@@ -46,8 +46,8 @@
     profile: "/interaction_profiles/ext/hand_interaction_ext",
     // left/right entries: bare-hand pointing + pinch to click (config: hand_pinch_click)
     pose: {
-      left: "/user/hand/left/input/aim_ext/pose",
-      right: "/user/hand/right/input/aim_ext/pose",
+      left: "/user/hand/left/input/aim/pose",
+      right: "/user/hand/right/input/aim/pose",
     },
     click: {
       left: "/user/hand/left/input/pinch_ext/value",

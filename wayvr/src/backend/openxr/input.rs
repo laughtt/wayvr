@@ -293,11 +293,49 @@ impl OpenXrInputSource {
             return;
         }
 
-        let raw = match self
+        let located = self
             .handsfree_pointer
             .space
-            .locate(&xr.stage, xr.predicted_display_time)
+            .locate(&xr.stage, xr.predicted_display_time);
         {
+            let st = &mut app.input_state.gaze.stats;
+            st.frames += 1;
+            match &located {
+                Ok(loc) => {
+                    st.last_flags = loc.location_flags.into_raw() as u32;
+                    if loc
+                        .location_flags
+                        .contains(xr::SpaceLocationFlags::ORIENTATION_VALID)
+                    {
+                        st.located += 1;
+                    }
+                }
+                Err(e) => {
+                    st.last_flags = u32::MAX;
+                    log::debug!("gaze locate failed: {e}");
+                }
+            }
+            let now = Instant::now();
+            let since = *st.since.get_or_insert(now);
+            if now.duration_since(since) >= Duration::from_secs(5) {
+                log::info!(
+                    "gaze: {} frames, located(orientation valid) {}, accepted {}, location flags {:#x}, active {}, slot {:?}",
+                    st.frames,
+                    st.located,
+                    st.fed_ok,
+                    st.last_flags,
+                    app.input_state.gaze.active,
+                    app.input_state.gaze.slot,
+                );
+                let st = &mut app.input_state.gaze.stats;
+                st.frames = 0;
+                st.located = 0;
+                st.fed_ok = 0;
+                st.since = Some(now);
+            }
+        }
+
+        let raw = match located {
             Ok(loc)
                 if loc
                     .location_flags

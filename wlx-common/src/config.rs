@@ -537,6 +537,12 @@ pub struct GeneralConfig {
 	#[serde(default)]
 	pub gaze_pointer: bool,
 
+	/// Gaze has priority over controller rays: while gaze is valid, controller rays are not used for
+	/// hovering (a controller trigger clicks where you look). Needed when the runtime reports
+	/// controllers with synthesized poses that always point at the overlays.
+	#[serde(default)]
+	pub gaze_over_controllers: bool,
+
 	/// OpenXR only: draw simple hands (needs XR_EXT_hand_tracking). Ignored if the runtime has no hand tracking.
 	#[serde(default = "def_true")]
 	pub show_hands: bool,
