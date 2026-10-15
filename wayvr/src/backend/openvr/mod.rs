@@ -157,6 +157,7 @@ pub fn openvr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
         let _ = overlay_mgr.wait_frame_sync(frame_timeout);
 
         if !RUNNING.load(Ordering::Relaxed) {
+            crate::teardown::begin_exit(crate::teardown::EXIT_DEADLINE);
             log::warn!("Received shutdown signal.");
             break 'main_loop;
         }

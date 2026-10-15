@@ -40,7 +40,7 @@ use std::{
 };
 
 use clap::Parser;
-use libc::{SIGINT, SIGTERM, SIGUSR1};
+use libc::SIGUSR1;
 use signal_hook::iterator::Signals;
 use sysinfo::Pid;
 use tracing::level_filters::LevelFilter;
@@ -302,28 +302,18 @@ const fn args_get_openxr(args: &Args) -> bool {
     ret
 }
 
-#[allow(clippy::single_match_else)]
 fn setup_signal_hooks() -> anyhow::Result<()> {
-    let mut signals = Signals::new([SIGINT, SIGTERM, SIGUSR1])?;
+    // The exit watchdog starts now, while no thread can hold the dynamic loader's lock (see teardown.rs), and
+    // SIGINT/SIGTERM are handled in signal-handler context, so neither depends on a thread that can block.
+    crate::teardown::start_watchdog()?;
+    crate::teardown::install_term_handlers()?;
 
+    let mut signals = Signals::new([SIGUSR1])?;
     std::thread::spawn(move || {
         for signal in signals.forever() {
-            match signal {
-                SIGUSR1 => {
-                    log::info!("SIGUSR1 received (keymap changed)");
-                    KEYMAP_CHANGE.store(true, Ordering::Relaxed);
-                }
-                _ if RUNNING.load(Ordering::Relaxed) => {
-                    RUNNING.store(false, Ordering::Relaxed);
-                }
-                _ => {
-                    // A second SIGINT/SIGTERM while the first one's teardown is still running: the user (or the
-                    // launcher) wants out now. Leave without running destructors or atexit handlers, which is
-                    // where a teardown can hang (GPU waits on a runtime that is gone).
-                    log::warn!("Second termination signal during shutdown: exiting immediately.");
-                    crate::teardown::reap_children();
-                    unsafe { libc::_exit(130) };
-                }
+            if signal == SIGUSR1 {
+                log::info!("SIGUSR1 received (keymap changed)");
+                KEYMAP_CHANGE.store(true, Ordering::Relaxed);
             }
         }
     });

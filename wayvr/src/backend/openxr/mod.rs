@@ -169,6 +169,9 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
     let mut environment_blend_mode = modes[0];
     let mut last_frame_time = Instant::now();
 
+    // Dropped first on an early return (`?`): the exit deadline then bounds the default-order drops as well.
+    let _arm_exit = crate::teardown::ArmExitOnDrop;
+
     'main_loop: loop {
         let now = Instant::now();
         app.delta_time = (now.duration_since(last_frame_time).as_secs_f32()).clamp(0.001, 0.2); // 5 - 1000 fps
@@ -176,7 +179,13 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
         let cur_frame = FRAME_COUNTER.fetch_add(1, Ordering::Relaxed);
 
         if !RUNNING.load(Ordering::Relaxed) {
+            // Arms the exit deadline (already armed by a SIGINT/SIGTERM; not yet for the dashboard's restart).
+            crate::teardown::begin_exit(crate::teardown::EXIT_DEADLINE);
             log::warn!("Received shutdown signal.");
+            if crate::teardown::exit_asap() {
+                log::warn!("Second termination signal: not waiting for the session to end.");
+                break 'main_loop;
+            }
             match xr_state.session.request_exit() {
                 Ok(()) => log::info!("OpenXR session exit requested."),
                 Err(xr::sys::Result::ERROR_SESSION_NOT_RUNNING) => break 'main_loop,
@@ -582,7 +591,8 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
     // the XR session went (xrDestroySession frees the runtime compositor's timeline semaphore and swapchain
     // images) while our last frame and the runtime's own signal submits could still be pending on the GPU, and
     // the Vulkan queues were dropped last with an unbounded vkQueueWaitIdle.
-    crate::teardown::arm_watchdog(Duration::from_secs(10));
+    // The exit deadline (normally armed by the signal already; this covers the runtime ending the session).
+    crate::teardown::begin_exit(crate::teardown::EXIT_DEADLINE);
     if !crate::teardown::quiesce_gpu(&app.gfx.device, Duration::from_secs(3)) {
         log::error!(
             "GPU did not get idle within 3 s after the session ended (runtime gone?): \
@@ -603,6 +613,9 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
     drop(frame_stream);
     drop(frame_wait);
     drop(xr_state);
+    // Nothing GPU-side of the runtime's is ours any more: a second SIGINT/SIGTERM may now exit at once, and the rest
+    // of the teardown gets a short budget (it hung once in a library destructor, 2026-10-15).
+    crate::teardown::mark_xr_released();
     // 3. Our Vulkan objects (and the embedded compositor and its child processes), still with the runtime loaded:
     //    nothing GPU-side is pending any more, so the queue waits in the drops return at once.
     drop(app);
