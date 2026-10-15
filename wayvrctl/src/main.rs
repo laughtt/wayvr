@@ -154,7 +154,7 @@ async fn run_once(state: &mut WayVRClientState, args: Args) -> anyhow::Result<()
                 env,
                 resolution,
                 pos_mode,
-                icon,
+                icon.filter(|s| !s.is_empty()), // "" = no icon (lets scripts pass `args` positionally)
                 args,
                 HashMap::new(),
             )
