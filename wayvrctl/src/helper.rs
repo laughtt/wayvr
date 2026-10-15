@@ -200,6 +200,17 @@ pub async fn wlx_desk_layout(
     )
 }
 
+pub async fn wlx_desk_screens(
+    state: &mut WayVRClientState,
+    params: wayvr_ipc::packet_client::WlxDeskScreensParams,
+) {
+    handle_empty_result(
+        WayVRClient::fn_wlx_desk_screens(state.wayvr_client.clone(), params)
+            .await
+            .context("failed to set the desk screens"),
+    )
+}
+
 pub async fn wlx_set_skybox(state: &mut WayVRClientState, skybox: Option<String>) {
     handle_empty_result(
         WayVRClient::fn_wlx_set_skybox(state.wayvr_client.clone(), skybox)

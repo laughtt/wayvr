@@ -10,6 +10,7 @@ pub enum WayVRSignal {
     Recenter,
     DeskLayout(wayvr_ipc::packet_client::WlxDeskLayoutParams),
     SetSkybox(Option<String>),
+    DeskScreens(wayvr_ipc::packet_client::WlxDeskScreensParams),
     /// The gaze laser: Some(on/off), None = toggle
     GazeLaser(Option<bool>),
     CustomTask(crate::backend::task::ModifyPanelTask),

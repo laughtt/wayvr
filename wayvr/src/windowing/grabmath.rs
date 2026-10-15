@@ -149,6 +149,39 @@ pub fn desk_arc(hmd: &Affine3A, i: usize, n: usize, width: f32, distance: f32) -
     Affine3A::from_scale_rotation_translation(Vec3::ONE * width, rot, pos.into())
 }
 
+/// Where a neighbour goes relative to the main screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    Left,
+    Right,
+    Up,
+}
+
+/// Pose of the screen next to `main` (`main_size` = displayed width, height in metres): the whole affine is rotated
+/// about an axis through `pivot` (the head) - left/right about the main's up axis, up about its right axis - by the
+/// angle that leaves `gap` metres between the facing edges (flat screens, both facing the pivot). Scale is kept.
+pub fn desk_neighbour(main: &Affine3A, main_size: (f32, f32), pivot: Vec3A, slot: Slot, gap: f32) -> Affine3A {
+    let right = Vec3A::from(main.matrix3.x_axis).normalize_or_zero();
+    let up = Vec3A::from(main.matrix3.y_axis).normalize_or_zero();
+    let (axis, extent, sign) = match slot {
+        Slot::Left => (up, main_size.0, 1.0),
+        Slot::Right => (up, main_size.0, -1.0),
+        Slot::Up => (right, main_size.1, 1.0),
+    };
+    if axis == Vec3A::ZERO {
+        return *main;
+    }
+    let d = (Vec3A::from(main.translation) - pivot).length().max(0.1);
+    let half = extent.max(0.01) * 0.5;
+    // the facing edge points sit at radius r, angle phi off their screen's centre line; they are 2 r sin(dθ/2) apart
+    let r = (d * d + half * half).sqrt();
+    let phi = (half / d).atan();
+    let g = gap.max(0.0);
+    let theta = 2.0 * phi + 2.0 * (g / (2.0 * r)).clamp(0.0, 1.0).asin();
+    let rot = Affine3A::from_quat(Quat::from_axis_angle(axis.into(), sign * theta));
+    Affine3A::from_translation(pivot.into()) * rot * Affine3A::from_translation((-pivot).into()) * *main
+}
+
 /// Why a live (world-locked) overlay should be put back, or None if it is fine.
 pub fn invalid_reason(t: &Affine3A, hmd: &Affine3A, lim: &Limits) -> Option<&'static str> {
     if t.to_cols_array().iter().any(|v| !v.is_finite()) {
@@ -199,6 +232,56 @@ mod tests {
     }
 
     use super::*;
+
+    fn check_neighbours(hmd: &Affine3A) {
+        let main = desk_arc(hmd, 0, 1, 2.0, 2.5);
+        let size = (2.0, 2.0 * 9.0 / 16.0);
+        let pivot = Vec3A::from(hmd.translation);
+        let mr = Vec3A::from(main.matrix3.x_axis).normalize();
+        let mu = Vec3A::from(main.matrix3.y_axis).normalize();
+        for (slot, gap) in [(Slot::Left, 0.05), (Slot::Right, 0.05), (Slot::Up, 0.05), (Slot::Left, 0.3)] {
+            let n = desk_neighbour(&main, size, pivot, slot, gap);
+            let c = Vec3A::from(n.translation);
+            let rel = c - Vec3A::from(main.translation);
+            assert!(((c - pivot).length() - 2.5).abs() < 1e-3, "{slot:?} distance");
+            // faces the pivot: -Z points away from the head
+            let back = -Vec3A::from(n.matrix3.z_axis).normalize();
+            assert!(back.dot((c - pivot).normalize()) > 0.99, "{slot:?} facing");
+            assert!((n.matrix3.x_axis.length() - 2.0).abs() < 1e-4, "{slot:?} scale");
+            let (axis, ext) = match slot {
+                Slot::Left | Slot::Right => (mr, size.0),
+                Slot::Up => (mu, size.1),
+            };
+            let s = if slot == Slot::Left { -1.0 } else { 1.0 };
+            assert!(rel.dot(axis) * s > 0.0, "{slot:?} side");
+            let na = Vec3A::from(if slot == Slot::Up { n.matrix3.y_axis } else { n.matrix3.x_axis }).normalize();
+            let e_main = Vec3A::from(main.translation) + axis * (s * ext * 0.5);
+            let e_n = c - na * (s * ext * 0.5);
+            let g = (e_n - e_main).length();
+            assert!((g - gap).abs() < 0.03, "{slot:?} gap {g} vs {gap}");
+        }
+    }
+
+    #[test]
+    fn desk_neighbour_identity() {
+        let hmd = Affine3A::IDENTITY;
+        let main = desk_arc(&hmd, 0, 1, 2.0, 2.5);
+        let size = (2.0, 1.125);
+        let l = Vec3A::from(desk_neighbour(&main, size, Vec3A::ZERO, Slot::Left, 0.05).translation);
+        let r = Vec3A::from(desk_neighbour(&main, size, Vec3A::ZERO, Slot::Right, 0.05).translation);
+        let u = Vec3A::from(desk_neighbour(&main, size, Vec3A::ZERO, Slot::Up, 0.05).translation);
+        assert!(l.x < -1.7 && r.x > 1.7 && u.y > 1.0, "{l} {r} {u}");
+        check_neighbours(&hmd);
+    }
+
+    #[test]
+    fn desk_neighbour_yawed_pitched_head() {
+        let hmd = Affine3A::from_rotation_translation(
+            Quat::from_rotation_y(0.9) * Quat::from_rotation_x(-0.3),
+            Vec3::new(0.4, 1.6, -0.7),
+        );
+        check_neighbours(&hmd);
+    }
 
     fn rot_scale(s: f32, yaw: f32, pos: Vec3) -> Affine3A {
         Affine3A::from_scale_rotation_translation(Vec3::ONE * s, Quat::from_rotation_y(yaw), pos)

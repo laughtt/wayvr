@@ -16,7 +16,7 @@ use wayvr_ipc::{
 
 use crate::helper::{
     WayVRClientState, wlr_input_capture, wlx_device_haptics, wlx_handsfree, wlx_input_state,
-    wlx_desk_layout, wlx_gaze, wlx_gaze_laser, wlx_panel_modify, wlx_recenter, wlx_reset_screens, wlx_set_skybox, wlx_show_hide, wlx_switch_set, wvr_process_get, wvr_process_launch,
+    wlx_desk_layout, wlx_desk_screens, wlx_gaze, wlx_gaze_laser, wlx_panel_modify, wlx_recenter, wlx_reset_screens, wlx_set_skybox, wlx_show_hide, wlx_switch_set, wvr_process_get, wvr_process_launch,
     wvr_process_list, wvr_process_terminate, wvr_window_list, wvr_window_set_visible,
 };
 
@@ -191,6 +191,33 @@ async fn run_once(state: &mut WayVRClientState, args: Args) -> anyhow::Result<()
             )
             .await;
         }
+        Subcommands::DeskScreens {
+            place,
+            hide_others,
+            width,
+            distance,
+            curvature,
+            gap,
+            specs,
+        } => {
+            let mut screens = Vec::new();
+            for spec in &specs {
+                screens.push(parse_desk_spec(spec)?);
+            }
+            wlx_desk_screens(
+                state,
+                packet_client::WlxDeskScreensParams {
+                    screens,
+                    place,
+                    hide_others,
+                    width,
+                    distance,
+                    curvature,
+                    gap,
+                },
+            )
+            .await;
+        }
         Subcommands::Skybox { name } => {
             let s = match name.as_str() {
                 "off" => None,
@@ -346,6 +373,29 @@ enum Subcommands {
         #[arg(short, long, default_value = "2.5")]
         distance: f32,
     },
+    /// Place/show/hide screens by output name: SLOT=NAME (shown) or SLOT=NAME:hide, SLOT = main|left|right|up
+    DeskScreens {
+        /// Re-place the listed visible screens even if they are already shown
+        #[arg(long)]
+        place: bool,
+        /// Hide every screen / app panel / mirror that is not listed
+        #[arg(long)]
+        hide_others: bool,
+        /// Width of the main screen in metres
+        #[arg(short, long, default_value = "2.0")]
+        width: f32,
+        /// Distance of the main screen from the head in metres
+        #[arg(short, long, default_value = "2.5")]
+        distance: f32,
+        #[arg(short, long, default_value = "0")]
+        curvature: f32,
+        /// Gap between neighbouring screen edges in metres
+        #[arg(long, default_value = "0.05")]
+        gap: f32,
+        /// SLOT=NAME or SLOT=NAME:hide (e.g. main=SUNSHINE left=PIMAX-LEFT right=PIMAX-RIGHT:hide)
+        #[arg(required = true)]
+        specs: Vec<String>,
+    },
     /// Backdrop over the main app: off, default (built-in sky) or a DDS file relative to the WayVR config root
     Skybox { name: String },
     /// Where the user is looking (silent eye tracking): overlay, UV, desktop pixel, fixations, as JSON
@@ -460,4 +510,31 @@ enum SubcommandPanelModify {
     SetVisible { visible_0_or_1: u8 },
     /// Set the sticky state of a <Button>. Intended for buttons without `sticky="1"`.
     SetStickyState { sticky_state_0_or_1: u8 },
+}
+
+/// `SLOT=NAME` or `SLOT=NAME:hide`
+fn parse_desk_spec(spec: &str) -> anyhow::Result<packet_client::WlxDeskScreen> {
+    use packet_client::WlxDeskSlot;
+    let (slot, rest) = spec
+        .split_once('=')
+        .ok_or_else(|| anyhow::anyhow!("bad spec '{spec}': expected SLOT=NAME or SLOT=NAME:hide"))?;
+    let slot = match slot {
+        "main" => WlxDeskSlot::Main,
+        "left" => WlxDeskSlot::Left,
+        "right" => WlxDeskSlot::Right,
+        "up" => WlxDeskSlot::Up,
+        other => anyhow::bail!("bad slot '{other}' in '{spec}': must be main, left, right or up"),
+    };
+    let (name, visible) = match rest.strip_suffix(":hide") {
+        Some(n) => (n, false),
+        None => (rest, true),
+    };
+    if name.is_empty() {
+        anyhow::bail!("bad spec '{spec}': empty screen name");
+    }
+    Ok(packet_client::WlxDeskScreen {
+        name: name.to_string(),
+        slot,
+        visible,
+    })
 }

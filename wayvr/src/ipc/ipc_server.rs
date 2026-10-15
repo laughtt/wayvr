@@ -446,6 +446,9 @@ impl Connection {
             PacketClient::WlxDeskLayout(p) => {
                 params.signals.send(WayVRSignal::DeskLayout(p));
             }
+            PacketClient::WlxDeskScreens(p) => {
+                params.signals.send(WayVRSignal::DeskScreens(p));
+            }
             PacketClient::WlxSetSkybox(s) => {
                 params.signals.send(WayVRSignal::SetSkybox(s));
             }

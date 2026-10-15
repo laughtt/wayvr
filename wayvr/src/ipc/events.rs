@@ -92,6 +92,153 @@ fn desk_layout<O>(
     }
 }
 
+/// `WlxDeskScreens`: place/show/hide named screens: main in front of the head, left/right/up edge to edge around it.
+fn desk_screens<O>(
+    app: &mut AppState,
+    overlays: &mut OverlayWindowManager<O>,
+    p: wayvr_ipc::packet_client::WlxDeskScreensParams,
+) where
+    O: Default,
+{
+    use crate::backend::task::ToggleMode;
+    use crate::windowing::{OverlayID, OverlaySelector, grabmath, window::OverlayCategory};
+    use glam::{Affine3A, Vec3A};
+    use wayvr_ipc::packet_client::WlxDeskSlot;
+
+    // displayed (width, height) in metres of a quad, as the OpenXR backend computes it
+    fn quad(t: &Affine3A, extent: [u32; 2]) -> Option<(f32, f32)> {
+        if extent[0] == 0 || extent[1] == 0 {
+            return None;
+        }
+        let aspect = extent[0] as f32 / extent[1] as f32;
+        Some(if aspect < 1.0 {
+            let major = t.matrix3.col(0).length();
+            (major * aspect, major)
+        } else {
+            let major = t.matrix3.col(1).length();
+            (major, major / aspect)
+        })
+    }
+    fn is_screenish(c: OverlayCategory) -> bool {
+        matches!(c, OverlayCategory::Screen | OverlayCategory::WayVR | OverlayCategory::Mirror)
+    }
+
+    let hmd = app.input_state.hmd;
+    let pivot = Vec3A::from(hmd.translation);
+    let curvature = if p.curvature.is_finite() { p.curvature.clamp(0.0, 1.0) } else { 0.0 };
+    let width = if p.width.is_finite() { p.width.clamp(0.3, 6.0) } else { 2.0 };
+    let distance = if p.distance.is_finite() { p.distance.clamp(0.4, 8.0) } else { 2.5 };
+    let gap = if p.gap.is_finite() { p.gap.clamp(0.0, 1.0) } else { 0.05 };
+
+    // names -> (id, slot, visible, was active before this call)
+    let mut listed: Vec<(OverlayID, WlxDeskSlot, bool, bool)> = Vec::new();
+    for s in &p.screens {
+        let found = overlays
+            .iter()
+            .find(|(_, o)| is_screenish(o.config.category) && o.config.name.as_ref() == s.name)
+            .map(|(id, o)| (id, o.config.is_active()));
+        match found {
+            Some((id, active)) => listed.push((id, s.slot, s.visible, active)),
+            None => log::warn!("desk screens: no screen/panel named '{}', skipped", s.name),
+        }
+    }
+
+    let set_pose = |app: &mut AppState, id: OverlayID, t: Affine3A| {
+        app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
+            OverlaySelector::Id(id),
+            Box::new(move |app, cfg| {
+                if let Some(state) = cfg.active_state.as_mut() {
+                    state.positioning = wlx_common::windowing::Positioning::Static;
+                    state.curvature = (curvature > 0.0).then_some(curvature);
+                    state.transform = t;
+                    crate::windowing::window::save_transform(state, app);
+                    cfg.dirty = true;
+                }
+            }),
+        )));
+    };
+    let toggle = |app: &mut AppState, id: OverlayID, mode: ToggleMode| {
+        app.tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleOverlay(OverlaySelector::Id(id), mode)));
+    };
+
+    // main first: its (resulting) pose and displayed size drive the neighbours
+    let mut main_pose: Option<(Affine3A, (f32, f32))> = None;
+    let mut shown = 0;
+    let mut hidden = 0;
+    if let Some(&(id, _, visible, was_active)) = listed.iter().find(|(_, s, ..)| *s == WlxDeskSlot::Main) {
+        if visible {
+            let place_it = p.place || !was_active;
+            let current = overlays
+                .mut_by_id(id)
+                .and_then(|o| o.config.active_state.as_ref().map(|s| s.transform));
+            let t = if place_it {
+                Some(grabmath::desk_arc(&hmd, 0, 1, width, distance))
+            } else {
+                current
+            };
+            toggle(app, id, ToggleMode::EnsureOn);
+            if let Some(t) = t {
+                if place_it {
+                    set_pose(app, id, t);
+                }
+                let size = overlays
+                    .mut_by_id(id)
+                    .and_then(|o| o.config.backend.frame_meta())
+                    .and_then(|m| quad(&(t * m.transform), m.extent))
+                    .unwrap_or_else(|| {
+                        let w = t.matrix3.col(0).length();
+                        (w, w * 9.0 / 16.0)
+                    });
+                main_pose = Some((t, size));
+            }
+            shown += 1;
+        } else {
+            toggle(app, id, ToggleMode::EnsureOff);
+            hidden += 1;
+        }
+    }
+
+    for &(id, slot, visible, was_active) in &listed {
+        let nslot = match slot {
+            WlxDeskSlot::Main => continue,
+            WlxDeskSlot::Left => grabmath::Slot::Left,
+            WlxDeskSlot::Right => grabmath::Slot::Right,
+            WlxDeskSlot::Up => grabmath::Slot::Up,
+        };
+        if !visible {
+            toggle(app, id, ToggleMode::EnsureOff);
+            hidden += 1;
+            continue;
+        }
+        toggle(app, id, ToggleMode::EnsureOn);
+        shown += 1;
+        if p.place || !was_active {
+            match main_pose {
+                Some((m, size)) => set_pose(app, id, grabmath::desk_neighbour(&m, size, pivot, nslot, gap)),
+                None => log::warn!("desk screens: no visible main screen, {slot:?} not placed"),
+            }
+        }
+    }
+
+    if p.hide_others {
+        let others: Vec<OverlayID> = overlays
+            .iter()
+            .filter(|(id, o)| is_screenish(o.config.category) && !listed.iter().any(|(l, ..)| l == id))
+            .map(|(id, _)| id)
+            .collect();
+        for id in others {
+            toggle(app, id, ToggleMode::EnsureOff);
+            hidden += 1;
+        }
+    }
+    log::info!(
+        "desk screens: {shown} shown, {hidden} hidden of {} listed (place {}, hide_others {}, width {width} m, distance {distance} m, curvature {curvature}, gap {gap} m)",
+        p.screens.len(),
+        p.place,
+        p.hide_others
+    );
+}
+
 /// Name of the custom panel (`custom_panels: [captions]`, `gui/captions.xml`) kept under the main screen.
 pub const CAPTIONS_NAME: &str = "captions";
 
@@ -218,6 +365,7 @@ where
                 ));
             }
             WayVRSignal::DeskLayout(p) => desk_layout(app, _overlays, p),
+            WayVRSignal::DeskScreens(p) => desk_screens(app, _overlays, p),
             WayVRSignal::SetSkybox(s) => {
                 log::info!("backdrop: {s:?}");
                 SKYBOX_OVER_MAIN.store(s.is_some(), std::sync::atomic::Ordering::Relaxed);

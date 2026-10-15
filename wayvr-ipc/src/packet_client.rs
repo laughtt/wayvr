@@ -92,6 +92,40 @@ pub struct WlxDeskLayoutParams {
 	pub distance: f32,
 }
 
+/// Which place a screen takes around the main one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WlxDeskSlot {
+	Main,
+	Left,
+	Right,
+	Up,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WlxDeskScreen {
+	/// Overlay name (the Wayland output name for screens)
+	pub name: String,
+	pub slot: WlxDeskSlot,
+	pub visible: bool,
+}
+
+/// Place/show/hide named screens: main in front of the head, left/right/up edge to edge around it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WlxDeskScreensParams {
+	pub screens: Vec<WlxDeskScreen>,
+	/// Re-place the listed visible screens even if they are already shown
+	pub place: bool,
+	/// Hide every other screen / app panel / mirror
+	pub hide_others: bool,
+	/// Width of the main screen in metres (used when it is placed)
+	pub width: f32,
+	/// Distance from the head in metres (used when the main is placed)
+	pub distance: f32,
+	pub curvature: f32,
+	/// Gap between neighbouring screen edges in metres
+	pub gap: f32,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PacketClient {
 	Handshake(Handshake),
@@ -117,6 +151,8 @@ pub enum PacketClient {
 	/// Backdrop drawn over the main app: None = off, Some("") = built-in sky, Some(file) = DDS relative to the
 	/// config root (appended last)
 	WlxSetSkybox(Option<String>),
+	/// Place/show/hide named screens around the main one (appended last)
+	WlxDeskScreens(WlxDeskScreensParams),
 	/// Where the user is looking (silent eye tracking): answered with `WlxGazeResponse` (appended last)
 	WlxGaze(Serial),
 	/// The subtle gaze laser: Some(on/off), None = toggle (appended last)
