@@ -221,9 +221,11 @@ fn desk_screens<O>(
     }
 
     if p.hide_others {
+        // only other desktop captures (a mirrored output, a stale screen): never a WayVR app window or panel, which
+        // would make an app vanish from VR on a mode switch (pimax desk preset, user report 2026-10-15)
         let others: Vec<OverlayID> = overlays
             .iter()
-            .filter(|(id, o)| is_screenish(o.config.category) && !listed.iter().any(|(l, ..)| l == id))
+            .filter(|(id, o)| hide_other_ok(o.config.category) && !listed.iter().any(|(l, ..)| l == id))
             .map(|(id, _)| id)
             .collect();
         for id in others {
@@ -237,6 +239,26 @@ fn desk_screens<O>(
         p.place,
         p.hide_others
     );
+}
+
+/// `desk-screens --hide-others` hides only desktop captures that are not listed. WayVR app windows and panels and
+/// mirrors keep their state: a mode switch only changes which screens show, it never hides an app.
+fn hide_other_ok(c: crate::windowing::window::OverlayCategory) -> bool {
+    matches!(c, crate::windowing::window::OverlayCategory::Screen)
+}
+
+#[cfg(test)]
+mod desk_screens_tests {
+    use super::hide_other_ok;
+    use crate::windowing::window::OverlayCategory;
+
+    #[test]
+    fn hide_others_never_hides_app_windows() {
+        assert!(hide_other_ok(OverlayCategory::Screen));
+        for c in [OverlayCategory::WayVR, OverlayCategory::Mirror, OverlayCategory::Panel, OverlayCategory::Keyboard, OverlayCategory::Dashboard] {
+            assert!(!hide_other_ok(c), "{c:?}");
+        }
+    }
 }
 
 /// `WlxScreenNudge`: move/scale a screen itself in space (left/right/up/down around the head, closer/farther, bigger/smaller).
