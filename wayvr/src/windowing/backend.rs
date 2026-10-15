@@ -160,6 +160,11 @@ pub trait OverlayBackend: Any {
     fn get_interaction_transform(&mut self) -> Option<Affine2>;
     fn get_attrib(&self, attrib: BackendAttrib) -> Option<BackendAttribValue>;
     fn set_attrib(&mut self, app: &mut AppState, value: BackendAttribValue) -> bool;
+    /// Desktop (compositor logical) pixel under an interaction UV, for overlays that show a desktop output.
+    /// Read-only: used by silent gaze tracking, never moves the mouse.
+    fn uv_to_desktop(&self, _uv: Vec2) -> Option<Vec2> {
+        None
+    }
 }
 
 pub fn ui_transform(extent: [u32; 2]) -> Affine2 {

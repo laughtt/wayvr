@@ -255,3 +255,28 @@ pub async fn wlx_input_state(state: &mut WayVRClientState) {
         .context("failed to get input state"),
     )
 }
+
+/// `wayvrctl gaze`: what the user looks at (silent eye tracking), as JSON. Fails (exit code 1) on an IPC error.
+pub async fn wlx_gaze(state: &mut WayVRClientState) -> anyhow::Result<()> {
+    let g = WayVRClient::fn_wlx_gaze(
+        state.wayvr_client.clone(),
+        state.serial_generator.increment_get(),
+    )
+    .await
+    .context("failed to get the gaze (a WayVR without gaze support drops the connection)")?;
+    let json = if state.pretty_print {
+        serde_json::to_string_pretty(&g)
+    } else {
+        serde_json::to_string(&g)
+    }?;
+    println!("{json}");
+    Ok(())
+}
+
+pub async fn wlx_gaze_laser(state: &mut WayVRClientState, on: Option<bool>) {
+    handle_empty_result(
+        WayVRClient::fn_wlx_gaze_laser(state.wayvr_client.clone(), on)
+            .await
+            .context("failed to set the gaze laser"),
+    )
+}

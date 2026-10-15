@@ -234,6 +234,23 @@
 ## Fixation dead zone in degrees. The gaze cursor stays still while your gaze moves less than this.
 #gaze_deadzone_deg: 0.6
 
+## OpenXR only. Silent gaze tracking: the gaze is ray-cast every frame but never hovers, clicks or moves
+## the mouse. `wayvrctl gaze` prints what you are looking at (overlay, UV, desktop pixel, fixation).
+#gaze_target: false
+
+## OpenXR only. A subtle marker where your eyes land (turns silent gaze tracking on).
+## Toggle at run time: `wayvrctl gaze-laser on|off|toggle`. Hidden during blinks and invalid frames.
+#gaze_laser: false
+
+## dot → a tiny dot at the hit point; ray → a short thin ray ending there
+#gaze_laser_style: dot
+
+## Laser opacity, 0.0 .. 1.0
+#gaze_laser_alpha: 0.35
+
+## Shortest fixation (ms) that counts as "looked at" for `wayvrctl gaze`
+#gaze_fixation_ms: 200
+
 ## OpenXR only. Draw simple semi-transparent hand skeletons (needs XR_EXT_hand_tracking).
 ## Hidden while the runtime reports the hand as untracked. Does nothing without hand tracking.
 #show_hands: true

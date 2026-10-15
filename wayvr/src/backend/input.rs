@@ -512,8 +512,89 @@ where
     }
 
     interact_gaze(overlays, app, lines, &hits);
+    track_gaze_silent(overlays, app);
 
     [hits[0].1, hits[1].1]
+}
+
+/// Silent gaze tracking: ray-cast the filtered gaze ray against the overlays WITHOUT hover, click or mouse
+/// moves, feed the fixation tracker (`wayvrctl gaze`) and place the laser marker. Runs with `gaze_target`,
+/// `gaze_laser` or `gaze_pointer` on; the laser shows only on a fresh (non-blink) sample that hits an overlay.
+fn track_gaze_silent<O>(overlays: &mut OverlayWindowManager<O>, app: &mut AppState)
+where
+    O: Default,
+{
+    use crate::backend::gaze_target::{GazeSample, laser_segment, unix_ms};
+
+    let cfg = &app.session.config;
+    let tracking = cfg.gaze_target || cfg.gaze_laser || cfg.gaze_pointer;
+    let (laser_on, style, min_ms) = (cfg.gaze_laser, cfg.gaze_laser_style, cfg.gaze_fixation_ms);
+    let gaze = &mut app.input_state.gaze;
+    gaze.tracking = tracking;
+    gaze.laser_on = laser_on;
+    gaze.laser = None;
+    if !tracking {
+        gaze.target.reset();
+        return;
+    }
+    let now_ms = unix_ms();
+    if !(gaze.active && gaze.fresh) {
+        gaze.target.update(now_ms, None, false, min_ms);
+        return;
+    }
+    let pose = gaze.ptr.pose;
+
+    let mut hits: SmallVec<[RayHit; 8]> = smallvec!();
+    for (id, overlay) in overlays.iter() {
+        let Some(state) = overlay.config.active_state.as_ref() else {
+            continue;
+        };
+        if !state.interactable {
+            continue;
+        }
+        if let Some(hit) = ray_test(&pose, id, &state.transform, state.curvature.as_ref())
+            && hit.dist.is_finite()
+        {
+            hits.push(hit);
+        }
+    }
+    hits.sort_by(|a, b| a.dist.total_cmp(&b.dist));
+
+    let mut sample = None;
+    for hit in hits {
+        let Some(overlay) = overlays.mut_by_id(hit.overlay) else {
+            continue;
+        };
+        let backend = overlay.config.backend.as_mut();
+        let Some(uv) = backend
+            .get_interaction_transform()
+            .map(|a| a.transform_point2(hit.local_pos))
+        else {
+            continue;
+        };
+        if !(0.0..=1.0).contains(&uv.x) || !(0.0..=1.0).contains(&uv.y) {
+            continue;
+        }
+        let px = backend.uv_to_desktop(uv);
+        sample = Some((
+            GazeSample {
+                overlay: overlay.config.name.clone(),
+                uv,
+                px,
+                dir: (hit.global_pos - pose.translation).normalize_or_zero().into(),
+                dist: hit.dist,
+            },
+            hit.global_pos,
+        ));
+        break;
+    }
+
+    let hmd = app.input_state.hmd;
+    let gaze = &mut app.input_state.gaze;
+    if laser_on && let Some((_, at)) = sample.as_ref() {
+        gaze.laser = Some(laser_segment(style, pose.translation, *at, &hmd));
+    }
+    gaze.target.update(now_ms, sample.map(|(s, _)| s), true, min_ms);
 }
 
 /// Swap the gaze pointer state with the controller pointer in `slot`. Calling it twice restores both.

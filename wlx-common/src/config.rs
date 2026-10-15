@@ -118,6 +118,17 @@ pub enum AltModifier {
 	AltGr,
 }
 
+/// Look of the gaze laser (`gaze_laser_style`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GazeLaserStyle {
+	/// A tiny dot at the hit point (about 0.6 degrees)
+	#[default]
+	Dot,
+	/// A short thin ray that ends at the hit point
+	Ray,
+}
+
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, EnumProperty, VariantArray)]
 pub enum HandsfreePointer {
 	#[strum(props(Translation = "APP_SETTINGS.OPTION.NONE"))]
@@ -300,6 +311,14 @@ const fn def_point7() -> f32 {
 
 const fn def_point3() -> f32 {
 	0.3
+}
+
+const fn def_gaze_laser_alpha() -> f32 {
+	0.35
+}
+
+const fn def_gaze_fixation_ms() -> u32 {
+	200
 }
 
 const fn def_gaze_deadzone() -> f32 {
@@ -610,6 +629,28 @@ pub struct GeneralConfig {
 	/// Gaze fixation dead zone in degrees. The cursor holds still within this angle.
 	#[serde(default = "def_gaze_deadzone")]
 	pub gaze_deadzone_deg: f32,
+
+	/// OpenXR only: silent gaze tracking. The gaze is ray-cast against the overlays every frame without hovering,
+	/// clicking or moving the mouse; `wayvrctl gaze` reports what is looked at (fixations, last stable fixation).
+	#[serde(default)]
+	pub gaze_target: bool,
+
+	/// OpenXR only: draw a subtle marker where the eyes land (implies silent gaze tracking).
+	/// Toggle at run time with `wayvrctl gaze-laser on|off|toggle`.
+	#[serde(default)]
+	pub gaze_laser: bool,
+
+	/// Gaze laser look: a tiny dot at the hit point, or a short thin ray ending there.
+	#[serde(default)]
+	pub gaze_laser_style: GazeLaserStyle,
+
+	/// Gaze laser opacity, 0..1.
+	#[serde(default = "def_gaze_laser_alpha")]
+	pub gaze_laser_alpha: f32,
+
+	/// Shortest fixation (ms) that counts as "looked at" for `wayvrctl gaze` (`last_stable`, `history`).
+	#[serde(default = "def_gaze_fixation_ms")]
+	pub gaze_fixation_ms: u32,
 
 	#[serde(default = "def_one")]
 	pub grid_opacity: f32,

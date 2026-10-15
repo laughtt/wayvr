@@ -347,6 +347,9 @@ impl OverlayBackend for EditModeBackendWrapper {
     fn get_attrib(&self, attrib: BackendAttrib) -> Option<BackendAttribValue> {
         self.inner.get_attrib(attrib)
     }
+    fn uv_to_desktop(&self, uv: glam::Vec2) -> Option<glam::Vec2> {
+        self.inner.uv_to_desktop(uv)
+    }
     fn set_attrib(&mut self, app: &mut AppState, value: BackendAttribValue) -> bool {
         self.inner.set_attrib(app, value)
     }

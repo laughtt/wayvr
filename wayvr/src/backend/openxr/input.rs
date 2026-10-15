@@ -282,7 +282,8 @@ impl OpenXrInputSource {
     /// Locate the eye gaze pose (if enabled and available) and feed it to the gaze pointer.
     fn update_gaze(&mut self, xr: &XrState, app: &mut AppState, hmd: Affine3A) {
         let cfg = &app.session.config;
-        if !cfg.gaze_pointer {
+        // the pointer, silent tracking and the laser all need the gaze pose
+        if !(cfg.gaze_pointer || cfg.gaze_target || cfg.gaze_laser) {
             if app.input_state.gaze.active || app.input_state.gaze.slot.is_some() {
                 app.input_state.gaze.feed(
                     None,

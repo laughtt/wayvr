@@ -123,14 +123,26 @@ impl LinePool {
         hmd: Affine3A,
         width: f32,
     ) {
+        debug_assert!(color < COLORS.len());
+        self.draw_between_rgba(id, start, end, COLORS[color], hmd, width);
+    }
+
+    /// [`Self::draw_between_width`] with a premultiplied RGBA colour (alpha < 1 blends).
+    pub(super) fn draw_between_rgba(
+        &mut self,
+        id: usize,
+        start: Vec3A,
+        end: Vec3A,
+        rgba: [f32; 4],
+        hmd: Affine3A,
+        width: f32,
+    ) {
         let dir = end - start;
         let len = dir.length();
 
         if len < 0.01 {
             return;
         }
-
-        debug_assert!(color < COLORS.len());
 
         let Some(line) = self.lines.get_mut(id) else {
             log::warn!("Line {id} not found");
@@ -171,7 +183,7 @@ impl LinePool {
         let posef = helpers::transform_to_posef(&transform);
 
         line.maybe_line = Some(Line {
-            color,
+            rgba,
             pose: posef,
             length: len,
             width,
@@ -193,7 +205,7 @@ impl LinePool {
                     .next()
                     .unwrap();
 
-                line.buf_color.write()?[0..4].copy_from_slice(&COLORS[inner.color]);
+                line.buf_color.write()?[0..4].copy_from_slice(&inner.rgba);
 
                 let mut cmd_buffer = app
                     .gfx
@@ -219,7 +231,7 @@ impl LinePool {
             line.swapchain.ensure_image_released()?;
 
             if let Some(inner) = line.maybe_line.take() {
-                let flags = if COLORS[inner.color][3] < 1.0 {
+                let flags = if inner.rgba[3] < 1.0 {
                     xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA
                 } else {
                     xr::CompositionLayerFlags::EMPTY
@@ -244,7 +256,7 @@ impl LinePool {
 }
 
 pub(super) struct Line {
-    pub(super) color: usize,
+    pub(super) rgba: [f32; 4],
     pub(super) pose: xr::Posef,
     pub(super) length: f32,
     pub(super) width: f32,

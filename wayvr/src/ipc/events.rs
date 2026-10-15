@@ -230,6 +230,11 @@ where
                     crate::backend::task::OpenXrTask::EnvironmentChanged,
                 ));
             }
+            WayVRSignal::GazeLaser(on) => {
+                let cfg = &mut app.session.config;
+                cfg.gaze_laser = on.unwrap_or(!cfg.gaze_laser);
+                log::info!("gaze laser: {}", if cfg.gaze_laser { "on" } else { "off" });
+            }
             WayVRSignal::SwitchSet(set) => {
                 app.tasks
                     .enqueue(TaskType::Overlay(OverlayTask::SwitchSet(set)));

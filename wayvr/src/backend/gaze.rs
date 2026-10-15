@@ -178,6 +178,16 @@ pub struct GazeState {
     last_raw: Option<(Quat, Vec3)>,
     frozen: u32,
     pub dwell_ms: u32,
+    /// A sample was accepted this frame (false during blinks / invalid frames, even within the grace period).
+    pub fresh: bool,
+    /// Silent gaze tracking runs (mirrors the config for the IPC answer).
+    pub tracking: bool,
+    /// The laser is on (mirrors the config).
+    pub laser_on: bool,
+    /// This frame's laser stroke `(a, b, width)`, if it is drawn.
+    pub laser: Option<(Vec3A, Vec3A, f32)>,
+    /// Fixations for `wayvrctl gaze`.
+    pub target: crate::backend::gaze_target::GazeTarget,
 }
 
 impl GazeState {
@@ -196,6 +206,11 @@ impl GazeState {
             last_raw: None,
             frozen: 0,
             dwell_ms: 0,
+            fresh: false,
+            tracking: false,
+            laser_on: false,
+            laser: None,
+            target: crate::backend::gaze_target::GazeTarget::default(),
         }
     }
 
@@ -221,6 +236,7 @@ impl GazeState {
         now: Instant,
     ) {
         self.dwell_ms = dwell_ms;
+        self.fresh = false;
 
         let valid = raw.filter(|p| {
             let t = p.translation;
@@ -292,6 +308,7 @@ impl GazeState {
         self.ptr.pose = pose;
         self.ptr.tracked = true;
         self.active = true;
+        self.fresh = true;
     }
 }
 

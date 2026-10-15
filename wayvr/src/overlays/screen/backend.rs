@@ -355,6 +355,10 @@ impl OverlayBackend for ScreenBackend {
 
     fn on_left(&mut self, _app: &mut AppState, _hand: usize) {}
 
+    fn uv_to_desktop(&self, uv: Vec2) -> Option<Vec2> {
+        (self.logical_size.x > 0.0 && self.logical_size.y > 0.0)
+            .then(|| self.mouse_transform.transform_point2(uv))
+    }
     fn get_interaction_transform(&mut self) -> Option<Affine2> {
         self.interaction_transform
     }

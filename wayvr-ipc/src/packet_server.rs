@@ -91,6 +91,49 @@ pub struct WlxInputState {
 	pub right: WlxInputStatePointer,
 }
 
+/// One gaze fixation (or the one in progress) on an overlay. Times are Unix epoch milliseconds.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct WlxGazeFixation {
+	/// Overlay name, e.g. the screen `SUNSHINE`
+	pub overlay: String,
+	/// Mean hit point in overlay UV (0..1, origin top-left)
+	pub uv: [f32; 2],
+	/// The same point in desktop (compositor logical) pixels, for screen overlays; None for other overlays
+	pub px: Option<[f32; 2]>,
+	pub start_ms: u64,
+	/// Time of the last sample in the fixation
+	pub end_ms: u64,
+	pub duration_ms: u32,
+	/// 0..1: share of valid frames, spread and duration
+	pub confidence: f32,
+	/// RMS angular spread of the samples around the mean, degrees
+	pub dispersion_deg: f32,
+	/// Distance from the eyes to the hit point, metres
+	pub dist_m: f32,
+	pub samples: u32,
+}
+
+/// Answer to `WlxGaze`.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct WlxGaze {
+	/// Unix epoch milliseconds when the answer was made
+	pub ts_ms: u64,
+	/// Silent gaze tracking runs (`gaze_target`, `gaze_laser` or `gaze_pointer` on)
+	pub tracking: bool,
+	/// The laser is drawn
+	pub laser: bool,
+	/// A valid gaze sample arrived this frame (false during blinks / lost tracking)
+	pub valid: bool,
+	/// Minimum fixation length for `last_stable`, milliseconds
+	pub min_fixation_ms: u32,
+	/// The fixation in progress (any length)
+	pub current: Option<WlxGazeFixation>,
+	/// The current fixation if it is long enough, else the newest long-enough one that ended in the last ~2 s
+	pub last_stable: Option<WlxGazeFixation>,
+	/// Long-enough fixations of the last ~10 s, oldest first (the current one is not included)
+	pub history: Vec<WlxGazeFixation>,
+}
+
 // "Wvr" prefixes are WayVR-specific
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +146,8 @@ pub enum PacketServer {
 	WvrProcessLaunchResponse(Serial, Result<WvrProcessHandle, String>),
 	WvrProcessListResponse(Serial, WvrProcessList),
 	WvrStateChanged(WvrStateChanged),
+	/// Appended last: no protocol bump needed
+	WlxGazeResponse(Serial, WlxGaze),
 }
 
 impl PacketServer {
@@ -116,6 +161,7 @@ impl PacketServer {
 			PacketServer::WvrProcessLaunchResponse(serial, _) => Some(serial),
 			PacketServer::WvrProcessListResponse(serial, _) => Some(serial),
 			PacketServer::WvrStateChanged(_) => None,
+			PacketServer::WlxGazeResponse(serial, _) => Some(serial),
 		}
 	}
 }

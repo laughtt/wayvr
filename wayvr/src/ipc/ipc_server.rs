@@ -449,6 +449,21 @@ impl Connection {
             PacketClient::WlxSetSkybox(s) => {
                 params.signals.send(WayVRSignal::SetSkybox(s));
             }
+            PacketClient::WlxGaze(serial) => {
+                let g = &params.input_state.gaze;
+                let report = g.target.report(
+                    crate::backend::gaze_target::unix_ms(),
+                    g.tracking,
+                    g.laser_on,
+                );
+                send_packet(
+                    &mut self.conn,
+                    &ipc::data_encode(&PacketServer::WlxGazeResponse(serial, report)),
+                )?;
+            }
+            PacketClient::WlxGazeLaser(on) => {
+                params.signals.send(WayVRSignal::GazeLaser(on));
+            }
             PacketClient::WlxSwitchSet(set) => {
                 Self::handle_wlx_switch_set(params, set);
             }

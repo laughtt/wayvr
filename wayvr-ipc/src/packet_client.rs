@@ -117,4 +117,8 @@ pub enum PacketClient {
 	/// Backdrop drawn over the main app: None = off, Some("") = built-in sky, Some(file) = DDS relative to the
 	/// config root (appended last)
 	WlxSetSkybox(Option<String>),
+	/// Where the user is looking (silent eye tracking): answered with `WlxGazeResponse` (appended last)
+	WlxGaze(Serial),
+	/// The subtle gaze laser: Some(on/off), None = toggle (appended last)
+	WlxGazeLaser(Option<bool>),
 }

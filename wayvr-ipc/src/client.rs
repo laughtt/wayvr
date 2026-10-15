@@ -439,6 +439,23 @@ impl WayVRClient {
 		Ok(())
 	}
 
+	pub async fn fn_wlx_gaze(
+		client: WayVRClientMutex,
+		serial: Serial,
+	) -> anyhow::Result<packet_server::WlxGaze> {
+		Ok(send_and_wait!(
+			client,
+			serial,
+			&PacketClient::WlxGaze(serial),
+			WlxGazeResponse
+		))
+	}
+
+	pub async fn fn_wlx_gaze_laser(client: WayVRClientMutex, on: Option<bool>) -> anyhow::Result<()> {
+		send_only!(client, &PacketClient::WlxGazeLaser(on));
+		Ok(())
+	}
+
 	pub async fn fn_wlx_show_hide(client: WayVRClientMutex) -> anyhow::Result<()> {
 		send_only!(client, &PacketClient::WlxShowHide);
 		Ok(())

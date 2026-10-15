@@ -147,6 +147,9 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
         lines.allocate(&xr_state, &app)?,
     ];
 
+    // the subtle gaze laser (silent eye tracking)
+    let gaze_laser_line = lines.allocate(&xr_state, &app)?;
+
     let hands_visual = hands::HandsVisual::new(&xr_state, &mut lines, &app);
 
     let watch_id = overlays.lookup(WATCH_NAME).unwrap(); // want panic
@@ -364,6 +367,17 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
                 line.b,
                 line.mode as usize + 1,
                 app.input_state.hmd,
+            );
+        }
+
+        if let Some((a, b, width)) = app.input_state.gaze.laser {
+            lines.draw_between_rgba(
+                gaze_laser_line,
+                a,
+                b,
+                crate::backend::gaze_target::laser_rgba(app.session.config.gaze_laser_alpha),
+                app.input_state.hmd,
+                width,
             );
         }
 
