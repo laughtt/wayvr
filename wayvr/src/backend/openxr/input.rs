@@ -21,6 +21,7 @@ use crate::{
 };
 
 use super::{XrState, helpers::posef_to_transform};
+use crate::backend::hand_pointer::{PointerSource, pointer_source};
 
 static CLICK_TIMES: [Duration; 3] = [
     Duration::ZERO,
@@ -32,7 +33,7 @@ pub(super) struct OpenXrInputSource {
     action_set: xr::ActionSet,
     pointers: [OpenXrPointer; 2],
     handsfree_pointer: OpenXrPointer,
-    /// Camera hands as the pointer (`prefer_hands`); None without camera hand tracking.
+    /// Camera hands as the pointer (`controllers_in_work`); None without camera hand tracking.
     pub(super) camera_hands: Option<super::camera_hands::CameraHands>,
 }
 
@@ -245,24 +246,32 @@ impl OpenXrInputSource {
 
         if app.input_state.picking_focus.is_none() {
             let should_disable_lerp = app.input_state.should_disable_lerp();
-            // a tracked camera hand has the pointer: the controller rays and buttons are not read at all
-            let hand_pointers = match self.camera_hands.as_mut() {
-                Some(ch) => ch.update(xr, &hmd, app.session.config.prefer_hands),
-                None => None,
-            };
+            // Work: controllers are not read at all unless `controllers_in_work` (camera hand pointer rule)
+            let controllers_in_work = app.session.config.controllers_in_work;
+            let hands = self
+                .camera_hands
+                .as_mut()
+                .map(|ch| ch.update(xr, &hmd, controllers_in_work));
+            let hands_only = hands.is_some() && !controllers_in_work;
             for i in 0..2 {
                 let pointer = &mut app.input_state.pointers[i];
-                if let Some(hands) = &hand_pointers {
-                    let lerp =
-                        (!should_disable_lerp).then_some(app.session.config.pointer_lerp_factor);
-                    apply_hand_pointer(pointer, hands[i].as_ref(), xr.fps, lerp);
+                let lerp = (!should_disable_lerp).then_some(app.session.config.pointer_lerp_factor);
+                let sample = hands.as_ref().and_then(|h| h[i]);
+                if hands_only {
+                    apply_hand_pointer(pointer, sample.as_ref(), xr.fps, lerp);
                 } else {
                     self.pointers[i].update(pointer, xr, &app.session, !should_disable_lerp)?;
+                    if hands.is_some()
+                        && pointer_source(true, true, pointer.tracked, sample.is_some())
+                            == PointerSource::Hand
+                    {
+                        apply_hand_pointer(pointer, sample.as_ref(), xr.fps, lerp);
+                    }
                 }
                 any_tracked |= pointer.tracked;
             }
-            // no head/eye fallback pointer either while the hands have it (it reads controller buttons)
-            any_tracked |= hand_pointers.is_some();
+            // no head/eye fallback pointer while hands only (it reads controller buttons)
+            any_tracked |= hands_only;
         } else {
             app.session.config.handsfree_pointer = app.session.config.handsfree_alt_tab.into();
 

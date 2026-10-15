@@ -1,13 +1,12 @@
-//! Camera hands as the pointer (`prefer_hands`, on by default).
+//! Camera hands as the pointer (`controllers_in_work`, off by default = hands only).
 //!
-//! When the runtime tracks a bare hand with its cameras (XR_EXT_hand_tracking, unobstructed data source), that hand
-//! is the pointer: its ray and its pinch replace the controllers. The controller rays and the controller buttons are
-//! ignored until no camera hand has been seen for [`HOLD`]. `wayvrctl prefer-hands off` (voice: "prioritize
-//! controllers") gives the controllers the pointer back; `on` ("prioritize hands") returns it to the hands.
+//! The runtime tracks a bare hand with its cameras (XR_EXT_hand_tracking, unobstructed data source); that hand is
+//! the pointer: its ray and its pinch replace the controllers. With `controllers_in_work` off (the default) the
+//! controllers are ignored ENTIRELY (rays, buttons, triggers, sticks, grabs), also while no hand is tracked.
+//! `wayvrctl controllers on` (voice: "use controllers") turns them back on; then a controller that is tracked wins
+//! and a tracked camera hand fills in for a controller that is not. See [`pointer_source`].
 //!
 //! The math here has no OpenXR in it (tests run without a runtime); `backend/openxr/camera_hands.rs` feeds it.
-
-use std::time::{Duration, Instant};
 
 use glam::{Affine3A, Vec3, Vec3A};
 
@@ -15,10 +14,6 @@ use glam::{Affine3A, Vec3, Vec3A};
 pub const PINCH_ON_M: f32 = 0.022;
 /// ... and above which it ends (hysteresis: camera joints jitter by a few mm).
 pub const PINCH_OFF_M: f32 = 0.040;
-/// The hands keep the pointer this long after the last tracked camera hand, so a few missed camera frames do not
-/// flick the pointer back to a controller that lies on the desk.
-pub const HOLD: Duration = Duration::from_millis(500);
-
 /// Shoulder estimate from the head: this far down and this far to the side (m).
 const SHOULDER_DOWN_M: f32 = 0.17;
 const SHOULDER_SIDE_M: f32 = 0.16;
@@ -114,27 +109,34 @@ impl HandGestures {
     }
 }
 
-/// Who has the pointer.
-#[derive(Debug, Default)]
-pub struct HandPriority {
-    last_seen: Option<Instant>,
-    active: bool,
+/// Where one pointer (one hand slot) gets its pose and buttons from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerSource {
+    /// The controller (read its actions).
+    Controller,
+    /// The camera hand (a sample, or nothing at all when no hand is tracked).
+    Hand,
 }
 
-impl HandPriority {
-    /// `prefer`: the `prefer_hands` setting; `any_hand`: a camera hand is tracked now. True while the hands have the
-    /// pointer. The second value is Some(new state) when it changed (for the log).
-    pub fn update(&mut self, prefer: bool, any_hand: bool, now: Instant) -> (bool, Option<bool>) {
-        if any_hand {
-            self.last_seen = Some(now);
-        }
-        let active = prefer
-            && self
-                .last_seen
-                .is_some_and(|t| now.saturating_duration_since(t) <= HOLD);
-        let changed = (active != self.active).then_some(active);
-        self.active = active;
-        (active, changed)
+/// The rule. `can_use_hands`: camera hand tracking exists in this runtime (without it the controllers always work,
+/// else the user would be locked out). `controllers_in_work`: the setting. `controller_tracked` is only asked when
+/// the controllers are allowed; `hand_tracked`: a camera hand is tracked in this slot.
+pub fn pointer_source(
+    can_use_hands: bool,
+    controllers_in_work: bool,
+    controller_tracked: bool,
+    hand_tracked: bool,
+) -> PointerSource {
+    if !can_use_hands {
+        return PointerSource::Controller;
+    }
+    if !controllers_in_work {
+        return PointerSource::Hand;
+    }
+    if controller_tracked || !hand_tracked {
+        PointerSource::Controller
+    } else {
+        PointerSource::Hand
     }
 }
 
@@ -225,30 +227,29 @@ mod tests {
     }
 
     #[test]
-    fn hands_keep_the_pointer_for_the_hold_time() {
-        let t0 = Instant::now();
-        let mut p = HandPriority::default();
-        assert_eq!(
-            p.update(true, false, t0),
-            (false, None),
-            "no hand yet: controllers"
-        );
-        assert_eq!(p.update(true, true, t0), (true, Some(true)));
-        assert_eq!(
-            p.update(true, false, t0 + HOLD / 2),
-            (true, None),
-            "short loss: still the hands"
-        );
-        assert_eq!(
-            p.update(true, false, t0 + HOLD * 2),
-            (false, Some(false)),
-            "long loss: controllers again"
-        );
-        assert_eq!(
-            p.update(false, true, t0 + HOLD * 3),
-            (false, None),
-            "prefer_hands off: controllers"
-        );
-        assert_eq!(p.update(true, true, t0 + HOLD * 3), (true, Some(true)));
+    fn controllers_off_means_hands_only_even_without_a_hand() {
+        use PointerSource::*;
+        for ctrl_tracked in [false, true] {
+            for hand in [false, true] {
+                // controllers ignored entirely: no fallback, with or without a tracked hand
+                assert_eq!(pointer_source(true, false, ctrl_tracked, hand), Hand);
+            }
+        }
+    }
+
+    #[test]
+    fn controllers_on_controller_wins_and_hand_fills_in() {
+        use PointerSource::*;
+        assert_eq!(pointer_source(true, true, true, true), Controller);
+        assert_eq!(pointer_source(true, true, true, false), Controller);
+        assert_eq!(pointer_source(true, true, false, true), Hand);
+        assert_eq!(pointer_source(true, true, false, false), Controller);
+    }
+
+    #[test]
+    fn no_camera_hand_tracking_never_locks_out_the_controllers() {
+        use PointerSource::*;
+        assert_eq!(pointer_source(false, false, false, false), Controller);
+        assert_eq!(pointer_source(false, true, true, true), Controller);
     }
 }

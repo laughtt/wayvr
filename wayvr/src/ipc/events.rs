@@ -487,13 +487,13 @@ where
             }
             WayVRSignal::PreferHands(on) => {
                 let cfg = &mut app.session.config;
-                cfg.prefer_hands = on.unwrap_or(!cfg.prefer_hands);
+                cfg.controllers_in_work = on.map_or(!cfg.controllers_in_work, |hands_only| !hands_only);
                 log::info!(
-                    "prefer hands: {}",
-                    if cfg.prefer_hands {
-                        "on (a tracked camera hand is the pointer)"
+                    "controllers in Work: {}",
+                    if cfg.controllers_in_work {
+                        "on (a tracked controller wins, hands fill in)"
                     } else {
-                        "off (controllers first)"
+                        "off (hands only, controllers ignored entirely)"
                     }
                 );
             }

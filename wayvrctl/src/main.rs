@@ -257,6 +257,15 @@ async fn run_once(state: &mut WayVRClientState, args: Args) -> anyhow::Result<()
             };
             wlx_gaze_laser(state, on).await;
         }
+        Subcommands::Controllers { state: on } => {
+            // the wire packet says "hands only": controllers on = hands only off
+            let hands_only = match on {
+                OnOffToggle::On => Some(false),
+                OnOffToggle::Off => Some(true),
+                OnOffToggle::Toggle => None,
+            };
+            wlx_prefer_hands(state, hands_only).await;
+        }
         Subcommands::PreferHands { state: on } => {
             let on = match on {
                 OnOffToggle::On => Some(true),
@@ -437,9 +446,11 @@ enum Subcommands {
     Gaze,
     /// The subtle gaze laser (a dot or short ray where the eyes land; never clicks or moves the mouse)
     GazeLaser { state: OnOffToggle },
-    /// Camera hands over controllers: on = a tracked bare hand is the pointer and the controllers are ignored,
-    /// off = the controllers have the pointer (voice: "prioritize hands" / "prioritize controllers")
+    /// Alias (inverse of `controllers`): on = hands only, controllers ignored entirely; off = controllers work too
     PreferHands { state: OnOffToggle },
+    /// Controllers in Work: on = controllers work too, off (default) = hands only, controllers ignored entirely
+    /// (voice: "use controllers" / "hands only")
+    Controllers { state: OnOffToggle },
     /// Apply a modification to a panel element
     PanelModify {
         /// The name of the overlay (XML file name without extension)

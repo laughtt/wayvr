@@ -9,14 +9,15 @@ use openxr as xr;
 use xr::sys::Handle as _;
 
 use super::{XrState, helpers::posef_to_transform};
-use crate::backend::hand_pointer::{HandGestures, HandJoints, HandPriority, HandSample};
+use crate::backend::hand_pointer::{HandGestures, HandJoints, HandSample};
 
 const LOG_SECS: u64 = 5;
 
 pub(super) struct CameraHands {
     trackers: [xr::HandTracker; 2],
     gestures: [HandGestures; 2],
-    priority: HandPriority,
+    /// last logged `controllers_in_work`
+    mode: Option<bool>,
     /// frames in the log window: (frames, left seen, right seen, frames the hands had the pointer)
     stats: (u32, u32, u32, u32),
     log_since: Option<Instant>,
@@ -64,12 +65,12 @@ impl CameraHands {
         let left = create_unobstructed(xr, xr::Hand::LEFT)?;
         let right = create_unobstructed(xr, xr::Hand::RIGHT)?;
         log::info!(
-            "camera hand pointer: ready (a tracked camera hand takes the pointer while prefer_hands is on)"
+            "camera hand pointer: ready (camera hands are the pointer; controllers ignored in Work unless controllers_in_work)"
         );
         Some(Self {
             trackers: [left, right],
             gestures: [HandGestures::default(); 2],
-            priority: HandPriority::default(),
+            mode: None,
             stats: (0, 0, 0, 0),
             log_since: None,
         })
@@ -94,32 +95,30 @@ impl CameraHands {
         })
     }
 
-    /// The hand pointers for this frame, or `None` when the controllers have the pointer.
+    /// The camera hand pointers for this frame (tracked or not; the caller applies the rule).
     pub(super) fn update(
         &mut self,
         xr: &XrState,
         hmd: &Affine3A,
-        prefer_hands: bool,
-    ) -> Option<[Option<HandSample>; 2]> {
+        controllers_in_work: bool,
+    ) -> [Option<HandSample>; 2] {
         let now = Instant::now();
         let mut out = [None, None];
-        if prefer_hands {
-            for (i, slot) in out.iter_mut().enumerate() {
-                match self.joints(xr, i) {
-                    Some(j) => *slot = self.gestures[i].sample(&j, i == 0, hmd),
-                    None => self.gestures[i].reset(),
-                }
+        for (i, slot) in out.iter_mut().enumerate() {
+            match self.joints(xr, i) {
+                Some(j) => *slot = self.gestures[i].sample(&j, i == 0, hmd),
+                None => self.gestures[i].reset(),
             }
         }
-        let any = out.iter().any(Option::is_some);
-        let (active, changed) = self.priority.update(prefer_hands, any, now);
-        if let Some(on) = changed {
+        let active = !controllers_in_work;
+        if self.mode != Some(controllers_in_work) {
+            self.mode = Some(controllers_in_work);
             log::info!(
                 "camera hand pointer: {}",
-                if on {
-                    "a camera hand is tracked, the hands have the pointer (controllers ignored)"
+                if active {
+                    "hands only, controllers ignored entirely"
                 } else {
-                    "the controllers have the pointer"
+                    "controllers on (a tracked controller wins; a tracked camera hand fills in)"
                 }
             );
         }
@@ -139,6 +138,6 @@ impl CameraHands {
             }
             self.log_since = Some(now);
         }
-        active.then_some(out)
+        out
     }
 }

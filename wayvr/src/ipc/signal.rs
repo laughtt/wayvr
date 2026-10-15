@@ -14,7 +14,7 @@ pub enum WayVRSignal {
     DeskScreens(wayvr_ipc::packet_client::WlxDeskScreensParams),
     /// The gaze laser: Some(on/off), None = toggle
     GazeLaser(Option<bool>),
-    /// Camera hands over controllers (`prefer_hands`): Some(on/off), None = toggle
+    /// Hands only in Work (`controllers_in_work` = !on): Some(on/off), None = toggle
     PreferHands(Option<bool>),
     CustomTask(crate::backend::task::ModifyPanelTask),
     WindowVisibilityChanged(window::WindowHandle, bool),
