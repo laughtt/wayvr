@@ -181,6 +181,33 @@ pub async fn wlx_reset_screens(state: &mut WayVRClientState) {
     )
 }
 
+pub async fn wlx_recenter(state: &mut WayVRClientState) {
+    handle_empty_result(
+        WayVRClient::fn_wlx_recenter(state.wayvr_client.clone())
+            .await
+            .context("failed to recenter"),
+    )
+}
+
+pub async fn wlx_desk_layout(
+    state: &mut WayVRClientState,
+    params: wayvr_ipc::packet_client::WlxDeskLayoutParams,
+) {
+    handle_empty_result(
+        WayVRClient::fn_wlx_desk_layout(state.wayvr_client.clone(), params)
+            .await
+            .context("failed to set the desk layout"),
+    )
+}
+
+pub async fn wlx_set_skybox(state: &mut WayVRClientState, skybox: Option<String>) {
+    handle_empty_result(
+        WayVRClient::fn_wlx_set_skybox(state.wayvr_client.clone(), skybox)
+            .await
+            .context("failed to set the backdrop"),
+    )
+}
+
 pub async fn wlx_switch_set(state: &mut WayVRClientState, set: Option<usize>) {
     handle_empty_result(
         WayVRClient::fn_wlx_switch_set(state.wayvr_client.clone(), set)

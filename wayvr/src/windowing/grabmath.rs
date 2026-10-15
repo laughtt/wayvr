@@ -129,6 +129,26 @@ pub fn default_front(hmd: &Affine3A, slot: usize) -> Affine3A {
     Affine3A::from_scale_rotation_translation(Vec3::ONE * scale, rot, pos.into())
 }
 
+/// Desk layout slot `i` of `n`: slot 0 in the middle, then alternately left and right on an arc around the head
+/// (yaw only), each screen facing the head, `width` metres wide at `distance` metres.
+pub fn desk_arc(hmd: &Affine3A, i: usize, n: usize, width: f32, distance: f32) -> Affine3A {
+    let fwd = {
+        let f = -Vec3A::from(hmd.matrix3.z_axis);
+        let f = Vec3A::new(f.x, 0.0, f.z);
+        if f.length() < 1e-3 { Vec3A::NEG_Z } else { f.normalize() }
+    };
+    let theta = (-fwd.x).atan2(-fwd.z);
+    // angle between neighbours: the screen width plus a 5 % gap, seen from the head
+    let step = 2.0 * ((width * 0.525) / distance.max(0.1)).atan();
+    let k = i.div_ceil(2) as f32;
+    let side = if i % 2 == 1 { 1.0 } else { -1.0 }; // 1 = left (positive yaw), 2 = right
+    let yaw = theta + if i == 0 || n <= 1 { 0.0 } else { side * k * step };
+    let rot = Quat::from_rotation_y(yaw);
+    let dir = rot * Vec3A::NEG_Z;
+    let pos = Vec3A::from(hmd.translation) + dir * distance;
+    Affine3A::from_scale_rotation_translation(Vec3::ONE * width, rot, pos.into())
+}
+
 /// Why a live (world-locked) overlay should be put back, or None if it is fine.
 pub fn invalid_reason(t: &Affine3A, hmd: &Affine3A, lim: &Limits) -> Option<&'static str> {
     if t.to_cols_array().iter().any(|v| !v.is_finite()) {
@@ -163,6 +183,21 @@ pub fn view_angle_deg(t: &Affine3A, hmd: &Affine3A) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn desk_arc_middle_left_right() {
+        let hmd = Affine3A::IDENTITY;
+        let m = desk_arc(&hmd, 0, 3, 2.0, 2.5);
+        assert!((Vec3A::from(m.translation) - Vec3A::new(0.0, 0.0, -2.5)).length() < 1e-4);
+        let l = Vec3A::from(desk_arc(&hmd, 1, 3, 2.0, 2.5).translation);
+        let r = Vec3A::from(desk_arc(&hmd, 2, 3, 2.0, 2.5).translation);
+        assert!(l.x < -1.5 && r.x > 1.5, "{l} {r}");
+        assert!((l.length() - 2.5).abs() < 1e-4 && (r.length() - 2.5).abs() < 1e-4);
+        // each faces the head: its -Z axis points away from the head
+        let t = desk_arc(&hmd, 1, 3, 2.0, 2.5);
+        let back = -Vec3A::from(t.matrix3.z_axis).normalize();
+        assert!(back.dot(l.normalize()) > 0.99);
+    }
+
     use super::*;
 
     fn rot_scale(s: f32, yaw: f32, pos: Vec3) -> Affine3A {

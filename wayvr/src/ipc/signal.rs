@@ -7,6 +7,9 @@ pub enum WayVRSignal {
     Handsfree(wayvr_ipc::packet_client::HandsfreeParams),
     ShowHide,
     ResetScreens,
+    Recenter,
+    DeskLayout(wayvr_ipc::packet_client::WlxDeskLayoutParams),
+    SetSkybox(Option<String>),
     CustomTask(crate::backend::task::ModifyPanelTask),
     WindowVisibilityChanged(window::WindowHandle, bool),
 }

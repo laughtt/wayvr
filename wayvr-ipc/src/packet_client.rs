@@ -81,6 +81,17 @@ pub struct WlxModifyPanelParams {
 	pub command: WlxModifyPanelCommand,
 }
 
+/// Desk layout: the first `screens` screens / app panels (0 = all) in an arc in front of the head, the rest hidden.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WlxDeskLayoutParams {
+	pub screens: u32,
+	pub curvature: f32,
+	/// Width of each screen in metres.
+	pub width: f32,
+	/// Distance from the head in metres.
+	pub distance: f32,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PacketClient {
 	Handshake(Handshake),
@@ -99,4 +110,11 @@ pub enum PacketClient {
 	WlxHandsfree(HandsfreeParams),
 	/// Put all screens back in front of the head (appended last: no protocol bump needed)
 	WlxResetScreens,
+	/// Recenter the play space (appended last: no protocol bump needed)
+	WlxRecenter,
+	/// Show/arrange screens and app panels (appended last)
+	WlxDeskLayout(WlxDeskLayoutParams),
+	/// Backdrop drawn over the main app: None = off, Some("") = built-in sky, Some(file) = DDS relative to the
+	/// config root (appended last)
+	WlxSetSkybox(Option<String>),
 }

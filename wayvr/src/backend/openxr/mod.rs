@@ -398,7 +398,7 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
         // Begin rendering
         let mut futures = GpuFutures::default();
 
-        if !main_session_visible && let Some(skybox) = skybox.as_mut() {
+        if let Some(skybox) = skybox.as_mut() {
             skybox.render(&xr_state, &app, &mut futures)?;
         }
 
@@ -450,7 +450,7 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
 
         // Layer composition
         let mut layers = vec![];
-        if !main_session_visible && let Some(skybox) = skybox.as_mut() {
+        if let Some(skybox) = skybox.as_mut() {
             for (idx, layer) in skybox.present(&xr_state, &app)?.into_iter().enumerate() {
                 layers.push(((idx as f32).mul_add(-50.0, 200.0), layer));
             }
@@ -596,7 +596,8 @@ fn reconfigure_environment_blend(
 
     let want_skybox = *environment_blend_mode == xr::EnvironmentBlendMode::OPAQUE
         && app.session.config.use_skybox
-        && !main_session_visible;
+        && (!main_session_visible
+            || crate::ipc::events::SKYBOX_OVER_MAIN.load(Ordering::Relaxed));
 
     if want_skybox {
         if let Some(curr_skybox) = skybox.as_ref() {

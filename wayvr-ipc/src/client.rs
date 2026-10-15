@@ -421,6 +421,24 @@ impl WayVRClient {
 		Ok(())
 	}
 
+	pub async fn fn_wlx_recenter(client: WayVRClientMutex) -> anyhow::Result<()> {
+		send_only!(client, &PacketClient::WlxRecenter);
+		Ok(())
+	}
+
+	pub async fn fn_wlx_desk_layout(
+		client: WayVRClientMutex,
+		params: packet_client::WlxDeskLayoutParams,
+	) -> anyhow::Result<()> {
+		send_only!(client, &PacketClient::WlxDeskLayout(params));
+		Ok(())
+	}
+
+	pub async fn fn_wlx_set_skybox(client: WayVRClientMutex, skybox: Option<String>) -> anyhow::Result<()> {
+		send_only!(client, &PacketClient::WlxSetSkybox(skybox));
+		Ok(())
+	}
+
 	pub async fn fn_wlx_show_hide(client: WayVRClientMutex) -> anyhow::Result<()> {
 		send_only!(client, &PacketClient::WlxShowHide);
 		Ok(())

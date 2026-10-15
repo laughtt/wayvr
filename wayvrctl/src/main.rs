@@ -16,7 +16,7 @@ use wayvr_ipc::{
 
 use crate::helper::{
     WayVRClientState, wlr_input_capture, wlx_device_haptics, wlx_handsfree, wlx_input_state,
-    wlx_panel_modify, wlx_reset_screens, wlx_show_hide, wlx_switch_set, wvr_process_get, wvr_process_launch,
+    wlx_desk_layout, wlx_panel_modify, wlx_recenter, wlx_reset_screens, wlx_set_skybox, wlx_show_hide, wlx_switch_set, wvr_process_get, wvr_process_launch,
     wvr_process_list, wvr_process_terminate, wvr_window_list, wvr_window_set_visible,
 };
 
@@ -171,6 +171,34 @@ async fn run_once(state: &mut WayVRClientState, args: Args) -> anyhow::Result<()
         Subcommands::ResetScreens => {
             wlx_reset_screens(state).await;
         }
+        Subcommands::Recenter => {
+            wlx_recenter(state).await;
+        }
+        Subcommands::DeskLayout {
+            screens,
+            curvature,
+            width,
+            distance,
+        } => {
+            wlx_desk_layout(
+                state,
+                packet_client::WlxDeskLayoutParams {
+                    screens,
+                    curvature,
+                    width,
+                    distance,
+                },
+            )
+            .await;
+        }
+        Subcommands::Skybox { name } => {
+            let s = match name.as_str() {
+                "off" => None,
+                "default" | "sky" => Some(String::new()),
+                file => Some(file.to_string()),
+            };
+            wlx_set_skybox(state, s).await;
+        }
         Subcommands::ShowHide => {
             wlx_show_hide(state).await;
         }
@@ -293,6 +321,22 @@ enum Subcommands {
     ShowHide,
     /// Put all screens back in front of the head
     ResetScreens,
+    /// Recenter the play space
+    Recenter,
+    /// Show the first N screens / app panels (0 = all) in an arc in front of the head, hide the rest
+    DeskLayout {
+        screens: u32,
+        #[arg(short, long, default_value = "0")]
+        curvature: f32,
+        /// Width of each screen in metres
+        #[arg(short, long, default_value = "2.0")]
+        width: f32,
+        /// Distance from the head in metres
+        #[arg(short, long, default_value = "2.5")]
+        distance: f32,
+    },
+    /// Backdrop over the main app: off, default (built-in sky) or a DDS file relative to the WayVR config root
+    Skybox { name: String },
     /// Apply a modification to a panel element
     PanelModify {
         /// The name of the overlay (XML file name without extension)

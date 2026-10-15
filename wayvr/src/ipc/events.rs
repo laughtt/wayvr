@@ -30,6 +30,68 @@ fn process_tick_tasks(
     }
 }
 
+/// True while a backdrop set over IPC (`WlxSetSkybox`) is drawn even though the main app (passthrough) is visible.
+pub static SKYBOX_OVER_MAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `WlxDeskLayout`: the first `screens` screens (desktop captures first, then WayVR app panels and mirrors; 0 = all)
+/// are shown in an arc in front of the head with the given curvature and size, the others are hidden (not closed).
+fn desk_layout<O>(
+    app: &mut AppState,
+    overlays: &mut OverlayWindowManager<O>,
+    p: wayvr_ipc::packet_client::WlxDeskLayoutParams,
+) where
+    O: Default,
+{
+    use crate::backend::task::ToggleMode;
+    use crate::windowing::{OverlaySelector, grabmath, window::OverlayCategory};
+
+    let mut ids: Vec<_> = overlays
+        .iter()
+        .filter_map(|(id, o)| {
+            let rank = match o.config.category {
+                OverlayCategory::Screen => 0,
+                OverlayCategory::WayVR => 1,
+                OverlayCategory::Mirror => 2,
+                _ => return None,
+            };
+            Some((rank, id))
+        })
+        .collect();
+    ids.sort_by_key(|(rank, _)| *rank); // stable: keeps the creation order inside a category
+    let n = if p.screens == 0 { ids.len() } else { (p.screens as usize).min(ids.len()) };
+    let hmd = app.input_state.hmd;
+    let curvature = p.curvature.clamp(0.0, 1.0);
+    let width = if p.width.is_finite() { p.width.clamp(0.3, 6.0) } else { 2.0 };
+    let distance = if p.distance.is_finite() { p.distance.clamp(0.4, 8.0) } else { 2.5 };
+    log::info!("desk layout: {n} of {} screens, curvature {curvature}, width {width} m, distance {distance} m", ids.len());
+    for (i, (_, id)) in ids.into_iter().enumerate() {
+        if i >= n {
+            app.tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleOverlay(
+                OverlaySelector::Id(id),
+                ToggleMode::EnsureOff,
+            )));
+            continue;
+        }
+        app.tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleOverlay(
+            OverlaySelector::Id(id),
+            ToggleMode::EnsureOn,
+        )));
+        let t = grabmath::desk_arc(&hmd, i, n, width, distance);
+        app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
+            OverlaySelector::Id(id),
+            Box::new(move |app, cfg| {
+                if let Some(state) = cfg.active_state.as_mut() {
+                    state.positioning = wlx_common::windowing::Positioning::Static;
+                    state.curvature = (curvature > 0.0).then_some(curvature);
+                    state.transform = t;
+                    crate::windowing::window::save_transform(state, app);
+                    cfg.dirty = true;
+                }
+            }),
+        )));
+    }
+}
+
 /// Name of the custom panel (`custom_panels: [captions]`, `gui/captions.xml`) kept under the main screen.
 pub const CAPTIONS_NAME: &str = "captions";
 
@@ -149,6 +211,24 @@ where
             WayVRSignal::ResetScreens => {
                 app.tasks
                     .enqueue(TaskType::Overlay(OverlayTask::ResetScreens));
+            }
+            WayVRSignal::Recenter => {
+                app.tasks.enqueue(TaskType::Playspace(
+                    crate::backend::task::PlayspaceTask::Recenter,
+                ));
+            }
+            WayVRSignal::DeskLayout(p) => desk_layout(app, _overlays, p),
+            WayVRSignal::SetSkybox(s) => {
+                log::info!("backdrop: {s:?}");
+                SKYBOX_OVER_MAIN.store(s.is_some(), std::sync::atomic::Ordering::Relaxed);
+                app.session.config.use_skybox = s.is_some();
+                if let Some(tex) = s {
+                    app.session.config.skybox_texture = tex.into();
+                }
+                #[cfg(feature = "openxr")]
+                app.tasks.enqueue(TaskType::OpenXR(
+                    crate::backend::task::OpenXrTask::EnvironmentChanged,
+                ));
             }
             WayVRSignal::SwitchSet(set) => {
                 app.tasks

@@ -440,6 +440,15 @@ impl Connection {
             PacketClient::WlxResetScreens => {
                 params.signals.send(WayVRSignal::ResetScreens);
             }
+            PacketClient::WlxRecenter => {
+                params.signals.send(WayVRSignal::Recenter);
+            }
+            PacketClient::WlxDeskLayout(p) => {
+                params.signals.send(WayVRSignal::DeskLayout(p));
+            }
+            PacketClient::WlxSetSkybox(s) => {
+                params.signals.send(WayVRSignal::SetSkybox(s));
+            }
             PacketClient::WlxSwitchSet(set) => {
                 Self::handle_wlx_switch_set(params, set);
             }
