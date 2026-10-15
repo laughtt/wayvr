@@ -94,6 +94,8 @@ pub struct OverlayWindowConfig {
     pub pause_movement: bool,
     /// seconds a world-locked screen has been out of view (desk mode auto-recovery)
     pub out_of_view_s: f32,
+    /// seconds since this window was created; a screen left out of view at start-up is brought back sooner
+    pub age_s: f32,
 }
 
 impl OverlayWindowConfig {
@@ -116,6 +118,7 @@ impl OverlayWindowConfig {
             resizing: false,
             pause_movement: false,
             out_of_view_s: 0.0,
+            age_s: 0.0,
         }
     }
 
@@ -179,11 +182,18 @@ impl OverlayWindowConfig {
         } else {
             grabmath::invalid_reason(&state.transform, &hmd, &lim)
         };
+        self.age_s += app.delta_time;
         if reason.is_none() {
+            // start-up: a pose saved in another session's world is often behind the user; don't make them wait 10 s
+            let limit = if self.age_s < 30.0 { 2.0 } else { 10.0 };
             if grabmath::view_angle_deg(&state.transform, &hmd) > 80.0 {
                 self.out_of_view_s += app.delta_time;
-                if self.out_of_view_s > 10.0 {
-                    reason = Some("out of view for more than 10 s");
+                if self.out_of_view_s > limit {
+                    reason = Some(if limit < 10.0 {
+                        "out of view for more than 2 s at start-up"
+                    } else {
+                        "out of view for more than 10 s"
+                    });
                 }
             } else {
                 self.out_of_view_s = 0.0;
