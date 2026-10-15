@@ -239,6 +239,85 @@ fn desk_screens<O>(
     );
 }
 
+/// `WlxScreenNudge`: move/scale a screen itself in space (left/right/up/down around the head, closer/farther, bigger/smaller).
+fn screen_nudge<O>(
+    app: &mut AppState,
+    overlays: &mut OverlayWindowManager<O>,
+    p: wayvr_ipc::packet_client::WlxScreenNudgeParams,
+) where
+    O: Default,
+{
+    use crate::windowing::{OverlaySelector, grabmath, window::OverlayCategory};
+    use glam::{Affine3A, Vec3A};
+    use wayvr_ipc::packet_client::WlxNudgeDir;
+
+    fn quad(t: &Affine3A, extent: [u32; 2]) -> Option<(f32, f32)> {
+        if extent[0] == 0 || extent[1] == 0 {
+            return None;
+        }
+        let aspect = extent[0] as f32 / extent[1] as f32;
+        Some(if aspect < 1.0 {
+            let major = t.matrix3.col(0).length();
+            (major * aspect, major)
+        } else {
+            let major = t.matrix3.col(1).length();
+            (major, major / aspect)
+        })
+    }
+
+    let found = overlays
+        .iter()
+        .find(|(_, o)| {
+            matches!(o.config.category, OverlayCategory::Screen | OverlayCategory::WayVR | OverlayCategory::Mirror)
+                && o.config.name.as_ref() == p.name
+        })
+        .map(|(id, _)| id);
+    let Some(id) = found else {
+        log::warn!("screen nudge: no screen/panel named '{}'", p.name);
+        return;
+    };
+    let Some(o) = overlays.mut_by_id(id) else {
+        return;
+    };
+    let Some(t) = o.config.active_state.as_ref().map(|s| s.transform) else {
+        log::info!("screen nudge: '{}' is not shown, nothing to move", p.name);
+        return;
+    };
+    let size = o
+        .config
+        .backend
+        .frame_meta()
+        .and_then(|m| quad(&(t * m.transform), m.extent))
+        .unwrap_or_else(|| {
+            let w = t.matrix3.col(0).length();
+            (w, w * 9.0 / 16.0)
+        });
+    let dir = match p.dir {
+        WlxNudgeDir::Left => grabmath::NudgeDir::Left,
+        WlxNudgeDir::Right => grabmath::NudgeDir::Right,
+        WlxNudgeDir::Up => grabmath::NudgeDir::Up,
+        WlxNudgeDir::Down => grabmath::NudgeDir::Down,
+        WlxNudgeDir::Closer => grabmath::NudgeDir::Closer,
+        WlxNudgeDir::Farther => grabmath::NudgeDir::Farther,
+        WlxNudgeDir::Bigger => grabmath::NudgeDir::Bigger,
+        WlxNudgeDir::Smaller => grabmath::NudgeDir::Smaller,
+    };
+    let pivot = Vec3A::from(app.input_state.hmd.translation);
+    let nt = grabmath::nudge(&t, size, pivot, dir, p.step);
+    log::info!("screen nudge: '{}' {:?} step {}", p.name, p.dir, p.step);
+    app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
+        OverlaySelector::Id(id),
+        Box::new(move |app, cfg| {
+            if let Some(state) = cfg.active_state.as_mut() {
+                state.positioning = wlx_common::windowing::Positioning::Static;
+                state.transform = nt;
+                crate::windowing::window::save_transform(state, app);
+                cfg.dirty = true;
+            }
+        }),
+    )));
+}
+
 /// Name of the custom panel (`custom_panels: [captions]`, `gui/captions.xml`) kept under the main screen.
 pub const CAPTIONS_NAME: &str = "captions";
 
@@ -366,6 +445,7 @@ where
             }
             WayVRSignal::DeskLayout(p) => desk_layout(app, _overlays, p),
             WayVRSignal::DeskScreens(p) => desk_screens(app, _overlays, p),
+            WayVRSignal::ScreenNudge(p) => screen_nudge(app, _overlays, p),
             WayVRSignal::SetSkybox(s) => {
                 log::info!("backdrop: {s:?}");
                 SKYBOX_OVER_MAIN.store(s.is_some(), std::sync::atomic::Ordering::Relaxed);

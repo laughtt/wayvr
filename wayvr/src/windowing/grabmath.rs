@@ -182,6 +182,66 @@ pub fn desk_neighbour(main: &Affine3A, main_size: (f32, f32), pivot: Vec3A, slot
     Affine3A::from_translation(pivot.into()) * rot * Affine3A::from_translation((-pivot).into()) * *main
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NudgeDir {
+    Left,
+    Right,
+    Up,
+    Down,
+    Closer,
+    Farther,
+    Bigger,
+    Smaller,
+}
+
+/// Move a screen in space. `size` = displayed (width, height) in metres. Left/right turn the screen about the world
+/// up axis through `pivot`, up/down about its own right axis, by `step * size / distance` radians (the centre moves
+/// `step * size` along the arc and the screen keeps facing the head). Closer/farther move it along pivot->centre by
+/// `step * distance`, the resulting distance clamped to 0.4..8 m. Bigger/smaller scale it about its own centre by
+/// (1 + step) or 1 / (1 + step), the scale clamped to 0.3..6. The step is clamped to 0.02..1.0.
+pub fn nudge(t: &Affine3A, size: (f32, f32), pivot: Vec3A, dir: NudgeDir, step: f32) -> Affine3A {
+    let step = if step.is_finite() { step.clamp(0.02, 1.0) } else { 0.25 };
+    let c = Vec3A::from(t.translation);
+    let d = (c - pivot).length();
+    if d < 1e-4 {
+        return *t;
+    }
+    let rotate = |axis: Vec3A, angle: f32| {
+        let rot = Affine3A::from_quat(Quat::from_axis_angle(axis.into(), angle));
+        Affine3A::from_translation(pivot.into()) * rot * Affine3A::from_translation((-pivot).into()) * *t
+    };
+    match dir {
+        NudgeDir::Left => rotate(Vec3A::Y, step * size.0 / d),
+        NudgeDir::Right => rotate(Vec3A::Y, -step * size.0 / d),
+        NudgeDir::Up | NudgeDir::Down => {
+            let right = Vec3A::from(t.matrix3.x_axis).normalize_or_zero();
+            if right == Vec3A::ZERO {
+                return *t;
+            }
+            let a = step * size.1 / d;
+            rotate(right, if dir == NudgeDir::Up { a } else { -a })
+        }
+        NudgeDir::Closer | NudgeDir::Farther => {
+            let s = if dir == NudgeDir::Closer { -1.0 } else { 1.0 };
+            let nd = (d * (1.0 + s * step)).clamp(0.4, 8.0);
+            let mut out = *t;
+            out.translation = (pivot + (c - pivot) * (nd / d)).into();
+            out
+        }
+        NudgeDir::Bigger | NudgeDir::Smaller => {
+            let cur = t.matrix3.y_axis.length().max(t.matrix3.x_axis.length());
+            if cur < 1e-6 {
+                return *t;
+            }
+            let f = if dir == NudgeDir::Bigger { 1.0 + step } else { 1.0 / (1.0 + step) };
+            let k = (cur * f).clamp(0.3, 6.0) / cur;
+            let mut out = *t;
+            out.matrix3 = t.matrix3 * k;
+            out
+        }
+    }
+}
+
 /// Why a live (world-locked) overlay should be put back, or None if it is fine.
 pub fn invalid_reason(t: &Affine3A, hmd: &Affine3A, lim: &Limits) -> Option<&'static str> {
     if t.to_cols_array().iter().any(|v| !v.is_finite()) {
@@ -232,6 +292,72 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn nudge_moves_and_keeps_facing() {
+        let hmd = Affine3A::IDENTITY;
+        let m = desk_arc(&hmd, 0, 1, 2.0, 2.5);
+        let size = (2.0, 1.125);
+        let p = Vec3A::ZERO;
+        let pos = |t: &Affine3A| Vec3A::from(t.translation);
+        let l = nudge(&m, size, p, NudgeDir::Left, 0.25);
+        let r = nudge(&m, size, p, NudgeDir::Right, 0.25);
+        let u = nudge(&m, size, p, NudgeDir::Up, 0.25);
+        let dn = nudge(&m, size, p, NudgeDir::Down, 0.25);
+        assert!(pos(&l).x < -0.3 && pos(&r).x > 0.3, "{} {}", pos(&l), pos(&r));
+        assert!(pos(&u).y > 0.1 && pos(&dn).y < -0.1);
+        for t in [l, r, u, dn] {
+            assert!((pos(&t).length() - 2.5).abs() < 1e-3);
+            let back = -Vec3A::from(t.matrix3.z_axis).normalize();
+            assert!(back.dot(pos(&t).normalize()) > 0.99);
+            assert!((t.matrix3.x_axis.length() - 2.0).abs() < 1e-4);
+        }
+        // left/right keep the screen upright
+        assert!(Vec3A::from(l.matrix3.y_axis).normalize().dot(Vec3A::Y) > 0.9999);
+        // arc length ~ step * width
+        assert!(((pos(&l) - pos(&m)).length() - 0.5).abs() < 0.03);
+        let c = nudge(&m, size, p, NudgeDir::Closer, 0.2);
+        assert!((pos(&c).length() - 2.0).abs() < 1e-3);
+        let f = nudge(&m, size, p, NudgeDir::Farther, 0.2);
+        assert!((pos(&f).length() - 3.0).abs() < 1e-3);
+        assert!((c.matrix3.x_axis.length() - 2.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn nudge_clamps() {
+        let m = desk_arc(&Affine3A::IDENTITY, 0, 1, 2.0, 0.45);
+        let c = nudge(&m, (2.0, 1.0), Vec3A::ZERO, NudgeDir::Closer, 1.0);
+        assert!((Vec3A::from(c.translation).length() - 0.4).abs() < 1e-3);
+        let m = desk_arc(&Affine3A::IDENTITY, 0, 1, 2.0, 7.9);
+        let f = nudge(&m, (2.0, 1.0), Vec3A::ZERO, NudgeDir::Farther, 1.0);
+        assert!((Vec3A::from(f.translation).length() - 8.0).abs() < 1e-3);
+        // step is clamped to 0.02..1.0: a huge step equals 1.0
+        let a = nudge(&m, (2.0, 1.0), Vec3A::ZERO, NudgeDir::Left, 50.0);
+        let b = nudge(&m, (2.0, 1.0), Vec3A::ZERO, NudgeDir::Left, 1.0);
+        assert!((Vec3A::from(a.translation) - Vec3A::from(b.translation)).length() < 1e-5);
+    }
+
+    #[test]
+    fn nudge_bigger_smaller() {
+        let hmd = Affine3A::from_rotation_translation(Quat::from_rotation_y(0.7), Vec3::new(0.2, 1.5, 0.3));
+        let m = desk_arc(&hmd, 0, 1, 2.0, 2.5);
+        let pivot = Vec3A::from(hmd.translation);
+        let b = nudge(&m, (2.0, 1.125), pivot, NudgeDir::Bigger, 0.25);
+        let s = nudge(&m, (2.0, 1.125), pivot, NudgeDir::Smaller, 0.25);
+        assert!((b.matrix3.x_axis.length() - 2.5).abs() < 1e-4);
+        assert!((s.matrix3.x_axis.length() - 1.6).abs() < 1e-4);
+        assert!((Vec3A::from(b.translation) - Vec3A::from(m.translation)).length() < 1e-6);
+        // orientation kept
+        let d = Vec3A::from(b.matrix3.z_axis).normalize().dot(Vec3A::from(m.matrix3.z_axis).normalize());
+        assert!(d > 0.9999);
+        // clamped to 0.3..6
+        let big = desk_arc(&hmd, 0, 1, 5.9, 2.5);
+        let bb = nudge(&big, (5.9, 3.3), pivot, NudgeDir::Bigger, 1.0);
+        assert!((bb.matrix3.x_axis.length() - 6.0).abs() < 1e-4);
+        let small = desk_arc(&hmd, 0, 1, 0.31, 2.5);
+        let ss = nudge(&small, (0.31, 0.17), pivot, NudgeDir::Smaller, 1.0);
+        assert!((ss.matrix3.x_axis.length() - 0.3).abs() < 1e-4);
+    }
 
     fn check_neighbours(hmd: &Affine3A) {
         let main = desk_arc(hmd, 0, 1, 2.0, 2.5);

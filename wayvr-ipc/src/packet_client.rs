@@ -126,6 +126,27 @@ pub struct WlxDeskScreensParams {
 	pub gap: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WlxNudgeDir {
+	Left,
+	Right,
+	Up,
+	Down,
+	Closer,
+	Farther,
+	Bigger,
+	Smaller,
+}
+
+/// Move/scale a screen in space. `step`: fraction of its displayed width (left/right), height (up/down), of its
+/// distance to the head (closer/farther) or of its size (bigger/smaller).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WlxScreenNudgeParams {
+	pub name: String,
+	pub dir: WlxNudgeDir,
+	pub step: f32,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PacketClient {
 	Handshake(Handshake),
@@ -153,6 +174,8 @@ pub enum PacketClient {
 	WlxSetSkybox(Option<String>),
 	/// Place/show/hide named screens around the main one (appended last)
 	WlxDeskScreens(WlxDeskScreensParams),
+	/// Move a screen left/right/up/down/closer/farther, or scale it (appended last)
+	WlxScreenNudge(WlxScreenNudgeParams),
 	/// Where the user is looking (silent eye tracking): answered with `WlxGazeResponse` (appended last)
 	WlxGaze(Serial),
 	/// The subtle gaze laser: Some(on/off), None = toggle (appended last)
