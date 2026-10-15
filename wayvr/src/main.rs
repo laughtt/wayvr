@@ -28,6 +28,7 @@ mod overlays;
 mod shaders;
 mod state;
 mod subsystem;
+mod teardown;
 mod test;
 mod windowing;
 
@@ -312,9 +313,16 @@ fn setup_signal_hooks() -> anyhow::Result<()> {
                     log::info!("SIGUSR1 received (keymap changed)");
                     KEYMAP_CHANGE.store(true, Ordering::Relaxed);
                 }
-                _ => {
+                _ if RUNNING.load(Ordering::Relaxed) => {
                     RUNNING.store(false, Ordering::Relaxed);
-                    break;
+                }
+                _ => {
+                    // A second SIGINT/SIGTERM while the first one's teardown is still running: the user (or the
+                    // launcher) wants out now. Leave without running destructors or atexit handlers, which is
+                    // where a teardown can hang (GPU waits on a runtime that is gone).
+                    log::warn!("Second termination signal during shutdown: exiting immediately.");
+                    crate::teardown::reap_children();
+                    unsafe { libc::_exit(130) };
                 }
             }
         }

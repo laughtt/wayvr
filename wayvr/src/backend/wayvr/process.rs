@@ -93,6 +93,25 @@ impl Drop for WayVRProcess {
             self.exec_path.as_str()
         );
         self.kill(libc::SIGTERM);
+        // Reap it, so no <defunct> child is left behind while the rest of the teardown runs: give it a short
+        // grace to exit on SIGTERM, then SIGKILL and wait (bounded: a SIGKILLed child is reaped at once).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) | Err(_) => return,
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Ok(None) => break,
+            }
+        }
+        log::warn!(
+            "Process {} ({}) ignored SIGTERM for 500 ms: sending SIGKILL",
+            self.child.id(),
+            self.exec_path.as_str()
+        );
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 

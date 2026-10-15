@@ -572,9 +572,43 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
         log::error!("Could not save state: {e:?}");
     }
     if app.session.config_dirty {
-        save_settings(&app.session.config)?;
+        if let Err(e) = save_settings(&app.session.config) {
+            log::error!("Could not save settings: {e:?}");
+        }
         app.session.config_dirty = false;
     }
+
+    // Ordered, bounded teardown (see teardown.rs). Without it the locals dropped in reverse declaration order:
+    // the XR session went (xrDestroySession frees the runtime compositor's timeline semaphore and swapchain
+    // images) while our last frame and the runtime's own signal submits could still be pending on the GPU, and
+    // the Vulkan queues were dropped last with an unbounded vkQueueWaitIdle.
+    crate::teardown::arm_watchdog(Duration::from_secs(10));
+    if !crate::teardown::quiesce_gpu(&app.gfx.device, Duration::from_secs(3)) {
+        log::error!(
+            "GPU did not get idle within 3 s after the session ended (runtime gone?): \
+             exiting without freeing GPU objects"
+        );
+        crate::teardown::exit_now(0);
+    }
+    log::info!("GPU idle; releasing OpenXR objects");
+    // 1. Everything that owns swapchains or XR spaces/actions, while the session is alive.
+    drop(input_source);
+    drop(hands_visual);
+    drop(skybox);
+    drop(delete_queue);
+    drop(lines);
+    drop(overlays);
+    // 2. The session (xrDestroySession runs when its last handle goes).
+    let instance = xr_state.instance.clone();
+    drop(frame_stream);
+    drop(frame_wait);
+    drop(xr_state);
+    // 3. Our Vulkan objects (and the embedded compositor and its child processes), still with the runtime loaded:
+    //    nothing GPU-side is pending any more, so the queue waits in the drops return at once.
+    drop(app);
+    // 4. The XR instance last (it unloads the runtime library).
+    drop(instance);
+    log::info!("OpenXR teardown done");
 
     Ok(())
 }
