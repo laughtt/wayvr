@@ -472,6 +472,11 @@ impl WayVRClient {
 		Ok(())
 	}
 
+	pub async fn fn_wlx_prefer_hands(client: WayVRClientMutex, on: Option<bool>) -> anyhow::Result<()> {
+		send_only!(client, &PacketClient::WlxPreferHands(on));
+		Ok(())
+	}
+
 	pub async fn fn_wlx_show_hide(client: WayVRClientMutex) -> anyhow::Result<()> {
 		send_only!(client, &PacketClient::WlxShowHide);
 		Ok(())

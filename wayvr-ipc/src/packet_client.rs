@@ -180,4 +180,6 @@ pub enum PacketClient {
 	WlxGaze(Serial),
 	/// The subtle gaze laser: Some(on/off), None = toggle (appended last)
 	WlxGazeLaser(Option<bool>),
+	/// Camera hands have the pointer over the controllers (`prefer_hands`): Some(on/off), None = toggle (appended last)
+	WlxPreferHands(Option<bool>),
 }

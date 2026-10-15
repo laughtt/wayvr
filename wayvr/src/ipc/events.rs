@@ -463,6 +463,18 @@ where
                 cfg.gaze_laser = on.unwrap_or(!cfg.gaze_laser);
                 log::info!("gaze laser: {}", if cfg.gaze_laser { "on" } else { "off" });
             }
+            WayVRSignal::PreferHands(on) => {
+                let cfg = &mut app.session.config;
+                cfg.prefer_hands = on.unwrap_or(!cfg.prefer_hands);
+                log::info!(
+                    "prefer hands: {}",
+                    if cfg.prefer_hands {
+                        "on (a tracked camera hand is the pointer)"
+                    } else {
+                        "off (controllers first)"
+                    }
+                );
+            }
             WayVRSignal::SwitchSet(set) => {
                 app.tasks
                     .enqueue(TaskType::Overlay(OverlayTask::SwitchSet(set)));

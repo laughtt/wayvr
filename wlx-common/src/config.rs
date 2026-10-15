@@ -614,6 +614,12 @@ pub struct GeneralConfig {
 	#[serde(default = "def_true")]
 	pub show_hands: bool,
 
+	/// OpenXR only: a bare hand the runtime tracks with its cameras is the pointer (ray from the shoulder through
+	/// the knuckle, index pinch = click, middle pinch = grab); the controller rays and buttons are ignored meanwhile.
+	/// Needs XR_EXT_hand_tracking_data_source. Toggle at run time with `wayvrctl prefer-hands on|off|toggle`.
+	#[serde(default = "def_true")]
+	pub prefer_hands: bool,
+
 	/// OpenXR only: pinch (XR_EXT_hand_interaction) clicks overlays. Read at startup.
 	#[serde(default = "def_true")]
 	pub hand_pinch_click: bool,

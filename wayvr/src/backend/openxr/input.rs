@@ -32,6 +32,8 @@ pub(super) struct OpenXrInputSource {
     action_set: xr::ActionSet,
     pointers: [OpenXrPointer; 2],
     handsfree_pointer: OpenXrPointer,
+    /// Camera hands as the pointer (`prefer_hands`); None without camera hand tracking.
+    pub(super) camera_hands: Option<super::camera_hands::CameraHands>,
 }
 
 pub(super) struct OpenXrPointer {
@@ -195,6 +197,7 @@ impl OpenXrInputSource {
                 OpenXrPointer::new(xr, right_source)?,
             ],
             handsfree_pointer: OpenXrPointer::new(xr, fallback_source)?,
+            camera_hands: None,
         })
     }
 
@@ -242,11 +245,24 @@ impl OpenXrInputSource {
 
         if app.input_state.picking_focus.is_none() {
             let should_disable_lerp = app.input_state.should_disable_lerp();
+            // a tracked camera hand has the pointer: the controller rays and buttons are not read at all
+            let hand_pointers = match self.camera_hands.as_mut() {
+                Some(ch) => ch.update(xr, &hmd, app.session.config.prefer_hands),
+                None => None,
+            };
             for i in 0..2 {
                 let pointer = &mut app.input_state.pointers[i];
-                self.pointers[i].update(pointer, xr, &app.session, !should_disable_lerp)?;
+                if let Some(hands) = &hand_pointers {
+                    let lerp =
+                        (!should_disable_lerp).then_some(app.session.config.pointer_lerp_factor);
+                    apply_hand_pointer(pointer, hands[i].as_ref(), xr.fps, lerp);
+                } else {
+                    self.pointers[i].update(pointer, xr, &app.session, !should_disable_lerp)?;
+                }
                 any_tracked |= pointer.tracked;
             }
+            // no head/eye fallback pointer either while the hands have it (it reads controller buttons)
+            any_tracked |= hand_pointers.is_some();
         } else {
             app.session.config.handsfree_pointer = app.session.config.handsfree_alt_tab.into();
 
@@ -443,6 +459,37 @@ impl OpenXrInputSource {
 
         old_len != app.input_state.devices.len()
     }
+}
+
+/// A camera hand as the pointer: its ray and pinch, nothing from the controller (None: not tracked this frame).
+fn apply_hand_pointer(
+    pointer: &mut Pointer,
+    hand: Option<&crate::backend::hand_pointer::HandSample>,
+    fps: f32,
+    lerp_factor: Option<f32>,
+) {
+    pointer.handsfree = false;
+    pointer.now = PointerState::default();
+    let Some(h) = hand else {
+        pointer.tracked = false;
+        return;
+    };
+    let (new_quat, new_pos) = (Quat::from_affine3(&h.pose), Vec3::from(h.pose.translation));
+    pointer.raw_pose = h.pose;
+    pointer.pose = match lerp_factor {
+        Some(f) if pointer.tracked => {
+            let f = (1.0 / (fps / 100.0) * f).clamp(0.1, 1.0);
+            let (cur_quat, cur_pos) = (Quat::from_affine3(&pointer.pose), pointer.pose.translation);
+            Affine3A::from_rotation_translation(
+                cur_quat.lerp(new_quat, f),
+                cur_pos.lerp(new_pos.into(), f).into(),
+            )
+        }
+        _ => h.pose,
+    };
+    pointer.tracked = true;
+    pointer.now.click = h.click;
+    pointer.now.grab = h.grab;
 }
 
 impl OpenXrPointer {

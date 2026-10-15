@@ -1,5 +1,6 @@
 pub mod gaze;
 pub mod gaze_target;
+pub mod hand_pointer;
 pub mod input;
 pub mod playspace_common;
 

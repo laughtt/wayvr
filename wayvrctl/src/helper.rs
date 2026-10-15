@@ -295,6 +295,14 @@ pub async fn wlx_gaze(state: &mut WayVRClientState) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub async fn wlx_prefer_hands(state: &mut WayVRClientState, on: Option<bool>) {
+    handle_empty_result(
+        WayVRClient::fn_wlx_prefer_hands(state.wayvr_client.clone(), on)
+            .await
+            .context("failed to set prefer-hands"),
+    )
+}
+
 pub async fn wlx_gaze_laser(state: &mut WayVRClientState, on: Option<bool>) {
     handle_empty_result(
         WayVRClient::fn_wlx_gaze_laser(state.wayvr_client.clone(), on)

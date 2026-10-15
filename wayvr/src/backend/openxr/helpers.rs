@@ -69,6 +69,10 @@ pub(super) fn init_xr() -> Result<(xr::Instance, xr::SystemId), anyhow::Error> {
     } else {
         log::warn!("Missing EXT_hand_tracking extension.");
     }
+    if available_extensions.ext_hand_tracking_data_source {
+        // camera hands vs. controller-emulated hands (the camera hand pointer, camera_hands.rs)
+        enabled_extensions.ext_hand_tracking_data_source = true;
+    }
     if available_extensions.ext_eye_gaze_interaction {
         enabled_extensions.ext_eye_gaze_interaction = true;
     } else {

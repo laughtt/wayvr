@@ -35,6 +35,7 @@ use crate::{
 };
 
 mod blocker;
+mod camera_hands;
 mod hands;
 mod helpers;
 mod input;
@@ -156,6 +157,7 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
 
     let mut input_source =
         input::OpenXrInputSource::new(&xr_state, app.session.config.hand_pinch_click)?;
+    input_source.camera_hands = camera_hands::CameraHands::new(&xr_state);
 
     let mut session_running = false;
     let mut event_storage = xr::EventDataBuffer::new();
