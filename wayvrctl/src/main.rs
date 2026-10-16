@@ -407,7 +407,7 @@ enum Subcommands {
         #[arg(short, long, default_value = "2.5")]
         distance: f32,
     },
-    /// Place/show/hide screens by output name: SLOT=NAME (shown) or SLOT=NAME:hide, SLOT = main|left|right|up
+    /// Place/show/hide screens by output name: SLOT=NAME (shown) or SLOT=NAME:hide, SLOT = main|left|right|up|up-left|up-right
     DeskScreens {
         /// Re-place the listed visible screens even if they are already shown
         #[arg(long)]
@@ -572,7 +572,9 @@ fn parse_desk_spec(spec: &str) -> anyhow::Result<packet_client::WlxDeskScreen> {
         "left" => WlxDeskSlot::Left,
         "right" => WlxDeskSlot::Right,
         "up" => WlxDeskSlot::Up,
-        other => anyhow::bail!("bad slot '{other}' in '{spec}': must be main, left, right or up"),
+        "up-left" => WlxDeskSlot::UpLeft,
+        "up-right" => WlxDeskSlot::UpRight,
+        other => anyhow::bail!("bad slot '{other}' in '{spec}': must be main, left, right, up, up-left or up-right"),
     };
     let (name, visible) = match rest.strip_suffix(":hide") {
         Some(n) => (n, false),

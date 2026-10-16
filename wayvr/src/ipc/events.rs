@@ -204,6 +204,8 @@ fn desk_screens<O>(
             WlxDeskSlot::Left => grabmath::Slot::Left,
             WlxDeskSlot::Right => grabmath::Slot::Right,
             WlxDeskSlot::Up => grabmath::Slot::Up,
+            WlxDeskSlot::UpLeft => grabmath::Slot::UpLeft,
+            WlxDeskSlot::UpRight => grabmath::Slot::UpRight,
         };
         if !visible {
             toggle(app, id, ToggleMode::EnsureOff);

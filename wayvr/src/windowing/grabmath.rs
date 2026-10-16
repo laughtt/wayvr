@@ -155,18 +155,35 @@ pub enum Slot {
     Left,
     Right,
     Up,
+    /// Above the left screen.
+    UpLeft,
+    /// Above the right screen.
+    UpRight,
 }
 
 /// Pose of the screen next to `main` (`main_size` = displayed width, height in metres): the whole affine is rotated
 /// about an axis through `pivot` (the head) - left/right about the main's up axis, up about its right axis - by the
 /// angle that leaves `gap` metres between the facing edges (flat screens, both facing the pivot). Scale is kept.
 pub fn desk_neighbour(main: &Affine3A, main_size: (f32, f32), pivot: Vec3A, slot: Slot, gap: f32) -> Affine3A {
+    // the corner screens sit above the left / right one, edge to edge, the same way Up sits above main
+    match slot {
+        Slot::UpLeft => {
+            let l = desk_neighbour(main, main_size, pivot, Slot::Left, gap);
+            return desk_neighbour(&l, main_size, pivot, Slot::Up, gap);
+        }
+        Slot::UpRight => {
+            let r = desk_neighbour(main, main_size, pivot, Slot::Right, gap);
+            return desk_neighbour(&r, main_size, pivot, Slot::Up, gap);
+        }
+        _ => {}
+    }
     let right = Vec3A::from(main.matrix3.x_axis).normalize_or_zero();
     let up = Vec3A::from(main.matrix3.y_axis).normalize_or_zero();
     let (axis, extent, sign) = match slot {
         Slot::Left => (up, main_size.0, 1.0),
         Slot::Right => (up, main_size.0, -1.0),
         Slot::Up => (right, main_size.1, 1.0),
+        Slot::UpLeft | Slot::UpRight => unreachable!("handled above"),
     };
     if axis == Vec3A::ZERO {
         return *main;
@@ -377,6 +394,7 @@ mod tests {
             let (axis, ext) = match slot {
                 Slot::Left | Slot::Right => (mr, size.0),
                 Slot::Up => (mu, size.1),
+                Slot::UpLeft | Slot::UpRight => unreachable!(),
             };
             let s = if slot == Slot::Left { -1.0 } else { 1.0 };
             assert!(rel.dot(axis) * s > 0.0, "{slot:?} side");
@@ -385,6 +403,29 @@ mod tests {
             let e_n = c - na * (s * ext * 0.5);
             let g = (e_n - e_main).length();
             assert!((g - gap).abs() < 0.03, "{slot:?} gap {g} vs {gap}");
+        }
+    }
+
+    #[test]
+    fn desk_corners_sit_above_left_and_right() {
+        for hmd in [Affine3A::IDENTITY, Affine3A::from_rotation_translation(Quat::from_rotation_y(0.7), glam::Vec3::new(1.0, 0.2, -0.5))] {
+            let main = desk_arc(&hmd, 0, 1, 2.0, 2.5);
+            let size = (2.0, 1.125);
+            let pivot = Vec3A::from(hmd.translation);
+            for (corner, side) in [(Slot::UpLeft, Slot::Left), (Slot::UpRight, Slot::Right)] {
+                let s = desk_neighbour(&main, size, pivot, side, 0.05);
+                let c = desk_neighbour(&main, size, pivot, corner, 0.05);
+                let (sc, cc) = (Vec3A::from(s.translation), Vec3A::from(c.translation));
+                assert!(((cc - pivot).length() - 2.5).abs() < 1e-3, "{corner:?} distance");
+                let back = -Vec3A::from(c.matrix3.z_axis).normalize();
+                assert!(back.dot((cc - pivot).normalize()) > 0.99, "{corner:?} facing");
+                assert!((c.matrix3.x_axis.length() - 2.0).abs() < 1e-4, "{corner:?} scale");
+                // above its side screen (along the main's up), and on the same side as it
+                let mu = Vec3A::from(main.matrix3.y_axis).normalize();
+                let mr = Vec3A::from(main.matrix3.x_axis).normalize();
+                assert!((cc - sc).dot(mu) > 0.9, "{corner:?} above");
+                assert!(((cc - sc).dot(mr)).abs() < 0.35, "{corner:?} column");
+            }
         }
     }
 

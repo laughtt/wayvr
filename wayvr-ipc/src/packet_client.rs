@@ -99,6 +99,10 @@ pub enum WlxDeskSlot {
 	Left,
 	Right,
 	Up,
+	/// Above the left screen (edge to edge)
+	UpLeft,
+	/// Above the right screen (edge to edge)
+	UpRight,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
