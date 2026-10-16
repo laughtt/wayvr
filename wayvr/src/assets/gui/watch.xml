@@ -151,8 +151,13 @@
         <!-- Pimax: "AI runs on" for voice commands (This PC / This PC, 2 stages / Online). Hidden unless the Pimax
              voice control shows it (wayvrctl panel-modify watch pimax_ai_root set-visible 1); a press runs
              `pimax-voice ai-mode next`, which saves the choice, starts or stops the local AI and sets the text. -->
-        <div id="pimax_ai_root" display="none" flex_direction="row" gap="8">
+        <div id="pimax_ai_root" display="none" flex_direction="row" flex_wrap="wrap" gap="8">
           <Button id="btn_ai_mode" macro="button_style" text="AI: ..." _press="::ShellExec pimax-voice ai-mode next" tooltip_str="Where voice commands are understood: tap to switch" tooltip_side="top" />
+          <!-- two stages on this PC only: the router (Lara) and the action model, each cycles through its list -->
+          <div id="pimax_ai_models" display="none" flex_direction="row" gap="8">
+          <Button id="btn_ai_router" macro="button_style" text="Lara" _press="::ShellExec pimax-voice ai-mode router-next" tooltip_str="The router that sorts commands: tap for the next one" tooltip_side="top" />
+          <Button id="btn_ai_action" macro="button_style" text="Model" _press="::ShellExec pimax-voice ai-mode action-next" tooltip_str="The model that acts: tap for the next one" tooltip_side="top" />
+          </div>
         </div>
 
         <!-- Bottom buttons -->
