@@ -182,6 +182,9 @@ pub struct GazeState {
     pub fresh: bool,
     /// Silent gaze tracking runs (mirrors the config for the IPC answer).
     pub tracking: bool,
+    /// `wayvrctl gaze` answers with fixations (config `gaze_target` or `gaze_pointer`). With only the visual marker
+    /// (`gaze_laser`) the answer says `tracking: false`, so nothing can target by gaze.
+    pub reporting: bool,
     /// The laser is on (mirrors the config).
     pub laser_on: bool,
     /// This frame's laser stroke `(a, b, width)`, if it is drawn.
@@ -208,6 +211,7 @@ impl GazeState {
             dwell_ms: 0,
             fresh: false,
             tracking: false,
+            reporting: false,
             laser_on: false,
             laser: None,
             target: crate::backend::gaze_target::GazeTarget::default(),

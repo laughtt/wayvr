@@ -459,7 +459,7 @@ impl Connection {
                 let g = &params.input_state.gaze;
                 let report = g.target.report(
                     crate::backend::gaze_target::unix_ms(),
-                    g.tracking,
+                    g.tracking && g.reporting,
                     g.laser_on,
                 );
                 send_packet(

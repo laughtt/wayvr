@@ -531,6 +531,7 @@ where
     let (laser_on, style, min_ms) = (cfg.gaze_laser, cfg.gaze_laser_style, cfg.gaze_fixation_ms);
     let gaze = &mut app.input_state.gaze;
     gaze.tracking = tracking;
+    gaze.reporting = cfg.gaze_target || cfg.gaze_pointer;
     gaze.laser_on = laser_on;
     gaze.laser = None;
     if !tracking {
