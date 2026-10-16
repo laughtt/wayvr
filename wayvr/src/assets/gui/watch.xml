@@ -148,15 +148,14 @@
           </div>
         </rectangle>
 
-        <!-- Pimax: "AI runs on" for voice commands (This PC / This PC, 2 stages / Online). Hidden unless the Pimax
-             voice control shows it (wayvrctl panel-modify watch pimax_ai_root set-visible 1); a press runs
-             `pimax-voice ai-mode next`, which saves the choice, starts or stops the local AI and sets the text. -->
+        <!-- Pimax: Local AI for voice commands (On / Off and Low / Medium / High, like the app's Local AI page). Hidden
+             unless the Pimax voice control shows it (wayvrctl panel-modify watch pimax_ai_root set-visible 1); a press
+             runs `pimax-voice ai-mode local-toggle` or `ai-mode preset-next`, which save the choice and load or unload
+             the models; the voice control sets the texts. -->
         <div id="pimax_ai_root" display="none" flex_direction="row" flex_wrap="wrap" gap="8">
-          <Button id="btn_ai_mode" macro="button_style" text="AI: ..." _press="::ShellExec pimax-voice ai-mode next" tooltip_str="Where voice commands are understood: tap to switch" tooltip_side="top" />
-          <!-- two stages on this PC only: the router (Lara) and the action model, each cycles through its list -->
+          <Button id="btn_ai_mode" macro="button_style" text="Local AI: ..." _press="::ShellExec pimax-voice ai-mode local-toggle" tooltip_str="Local AI models for voice commands: On / Off" tooltip_side="top" />
           <div id="pimax_ai_models" display="none" flex_direction="row" gap="8">
-          <Button id="btn_ai_router" macro="button_style" text="Lara" _press="::ShellExec pimax-voice ai-mode router-next" tooltip_str="The router that sorts commands: tap for the next one" tooltip_side="top" />
-          <Button id="btn_ai_action" macro="button_style" text="Model" _press="::ShellExec pimax-voice ai-mode action-next" tooltip_str="The model that acts: tap for the next one" tooltip_side="top" />
+            <Button id="btn_ai_preset" macro="button_style" text="Medium" _press="::ShellExec pimax-voice ai-mode preset-next" tooltip_str="Low / Medium / High: how much of the PC the AI may use" tooltip_side="top" />
           </div>
         </div>
 
