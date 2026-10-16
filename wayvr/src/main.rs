@@ -192,7 +192,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = Command::new(exe).args(args).spawn();
     }
 
-    Ok(())
+    // Leave without running libc's atexit handlers. Screen-capture threads (wlr-screencopy callbacks) may still
+    // be submitting Vulkan uploads; returning from main runs the NVIDIA driver's exit handlers concurrently with
+    // such a submit and crashed (SIGSEGV in libnvidia-glcore under QueueGuard::submit_unchecked, 2026-10-16,
+    // 15:56, after a clean "OpenXR teardown done"). The OpenXR/Vulkan objects are already released by the backend.
+    crate::teardown::exit_now(0)
 }
 
 #[allow(unused_mut, clippy::similar_names)]
