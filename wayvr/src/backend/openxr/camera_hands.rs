@@ -23,7 +23,9 @@ pub(super) struct CameraHands {
     log_since: Option<Instant>,
 }
 
-fn create_unobstructed(xr: &XrState, hand: xr::Hand) -> Option<xr::HandTracker> {
+/// A hand tracker that asks for the unobstructed (camera) data source only; `None` without hand tracking or when
+/// the runtime refuses it.
+pub(super) fn create_unobstructed(xr: &XrState, hand: xr::Hand) -> Option<xr::HandTracker> {
     let fp = xr.instance.exts().ext_hand_tracking.as_ref()?;
     let mut sources = [xr::sys::HandTrackingDataSourceEXT::UNOBSTRUCTED];
     let source_info = xr::sys::HandTrackingDataSourceInfoEXT {

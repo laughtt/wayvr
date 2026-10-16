@@ -1,6 +1,11 @@
 //! Simple hand skeletons from XR_EXT_hand_tracking, drawn with the line pool (flat opaque strokes: two per
 //! finger so a curl shows as a bend, plus two across the palm). Wider and in a stronger colour than the pointer rays:
 //! the first version (2 mm, 45 % light blue) was hard to see even where the hands were in view.
+//!
+//! Only CAMERA hands are drawn (trackers that ask for the unobstructed data source, XR_EXT_hand_tracking_data_source):
+//! a runtime that makes up hand joints from a controller (Monado's Pimax driver: trigger/grip -> curls, data source
+//! CONTROLLER) would otherwise draw an amber hand over every controller model. Without the data-source extension the
+//! two cannot be told apart, so no hands are drawn.
 
 use std::{cell::Cell, time::Instant};
 
@@ -70,14 +75,18 @@ impl HandsVisual {
             log::info!("Hand tracking not available, hands will not be shown.");
             return None;
         }
+        if xr.instance.exts().ext_hand_tracking_data_source.is_none() {
+            log::info!(
+                "No XR_EXT_hand_tracking_data_source: camera hands cannot be told from controller hands, hands will not be shown."
+            );
+            return None;
+        }
         let mut hands = Vec::with_capacity(2);
         for side in [xr::Hand::LEFT, xr::Hand::RIGHT] {
-            let tracker = match xr.session.create_hand_tracker(side) {
-                Ok(t) => t,
-                Err(e) => {
-                    log::warn!("Could not create hand tracker: {e}");
-                    return None;
-                }
+            // camera hands only: never the hand a controller emulates (drawn over the controller model)
+            let Some(tracker) = super::camera_hands::create_unobstructed(xr, side) else {
+                log::info!("No camera hand tracker for {side:?}, hands will not be shown.");
+                return None;
             };
             let mut ids = [0usize; STROKE_COUNT];
             for id in &mut ids {
@@ -89,7 +98,7 @@ impl HandsVisual {
                 lines: ids,
             });
         }
-        log::info!("Hand tracking enabled, drawing hands.");
+        log::info!("Camera hand tracking enabled, drawing camera hands (never controller hands).");
         Some(Self {
             hands,
             log_since: Cell::new(None),
