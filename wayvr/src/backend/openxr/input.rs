@@ -20,7 +20,8 @@ use crate::{
     state::{AppSession, AppState},
 };
 
-use super::{XrState, helpers::posef_to_transform};
+use super::{XrState, controller_render::ShownController, helpers::posef_to_transform};
+use crate::backend::controller_model::ControllerInputs;
 use crate::backend::hand_pointer::{PointerSource, pointer_source};
 
 static CLICK_TIMES: [Duration; 3] = [
@@ -35,6 +36,105 @@ pub(super) struct OpenXrInputSource {
     handsfree_pointer: OpenXrPointer,
     /// Camera hands as the pointer (`controllers_in_work`); None without camera hand tracking.
     pub(super) camera_hands: Option<super::camera_hands::CameraHands>,
+    /// Grip pose and the inputs that move the controller model (Touch profile only), left and right.
+    model_actions: [ModelActions; 2],
+    /// Controller models to draw this frame (`show_controller_models`, only while the controller is the pointer).
+    pub(super) shown: [Option<ShownController>; 2],
+    /// Raw aim and grip poses of the controllers in use, for the debug axes (`controller_axes`).
+    pub(super) debug_poses: [Option<(Affine3A, Affine3A)>; 2],
+}
+
+/// Actions for the controller model: grip pose (where the model is drawn) and the values that move its parts.
+/// Bound for /interaction_profiles/oculus/touch_controller only (the model is a Touch v3).
+pub(super) struct ModelActions {
+    grip: xr::Action<xr::Posef>,
+    grip_space: xr::Space,
+    trigger: xr::Action<f32>,
+    squeeze: xr::Action<f32>,
+    stick: xr::Action<Vector2f>,
+    stick_click: xr::Action<bool>,
+    primary: xr::Action<bool>,
+    secondary: xr::Action<bool>,
+    menu: xr::Action<bool>,
+}
+
+impl ModelActions {
+    fn new(xr: &XrState, set: &xr::ActionSet, side: &str) -> anyhow::Result<Self> {
+        let n = |what: &str| format!("{side}_model_{what}");
+        let grip = set.create_action::<xr::Posef>(&n("grip"), &n("grip"), &[])?;
+        let grip_space = grip.create_space(&xr.session, xr::Path::NULL, xr::Posef::IDENTITY)?;
+        Ok(Self {
+            grip,
+            grip_space,
+            trigger: set.create_action(&n("trigger"), &n("trigger"), &[])?,
+            squeeze: set.create_action(&n("squeeze"), &n("squeeze"), &[])?,
+            stick: set.create_action(&n("stick"), &n("stick"), &[])?,
+            stick_click: set.create_action(&n("stick_click"), &n("stick_click"), &[])?,
+            primary: set.create_action(&n("primary"), &n("primary"), &[])?,
+            secondary: set.create_action(&n("secondary"), &n("secondary"), &[])?,
+            menu: set.create_action(&n("menu"), &n("menu"), &[])?,
+        })
+    }
+
+    /// Touch bindings of this hand (`left`: X/Y/menu, right: A/B).
+    fn touch_bindings<'a>(&'a self, instance: &xr::Instance, left: bool) -> Vec<xr::Binding<'a>> {
+        let side = if left { "left" } else { "right" };
+        let p = |s: &str| to_paths(Some(&format!("/user/hand/{side}/input/{s}")), instance);
+        let mut b = Vec::new();
+        if let Some(x) = p("grip/pose") {
+            b.push(xr::Binding::new(&self.grip, x));
+        }
+        for (a, s) in [(&self.trigger, "trigger/value"), (&self.squeeze, "squeeze/value")] {
+            if let Some(x) = p(s) {
+                b.push(xr::Binding::new(a, x));
+            }
+        }
+        if let Some(x) = p("thumbstick") {
+            b.push(xr::Binding::new(&self.stick, x));
+        }
+        let (prim, sec) = if left { ("x/click", "y/click") } else { ("a/click", "b/click") };
+        for (a, s) in [
+            (&self.stick_click, "thumbstick/click"),
+            (&self.primary, prim),
+            (&self.secondary, sec),
+        ] {
+            if let Some(x) = p(s) {
+                b.push(xr::Binding::new(a, x));
+            }
+        }
+        if left && let Some(x) = p("menu/click") {
+            b.push(xr::Binding::new(&self.menu, x));
+        }
+        b
+    }
+
+    /// Grip pose (stage) and model inputs, None when the grip is not located.
+    fn read(&self, xr: &XrState) -> Option<ShownController> {
+        let loc = self.grip_space.locate(&xr.stage, xr.predicted_display_time).ok()?;
+        if !loc.location_flags.contains(
+            xr::SpaceLocationFlags::ORIENTATION_VALID | xr::SpaceLocationFlags::POSITION_VALID,
+        ) {
+            return None;
+        }
+        let f = |a: &xr::Action<f32>| a.state(&xr.session, xr::Path::NULL).map_or(0.0, |s| s.current_state);
+        let b = |a: &xr::Action<bool>| a.state(&xr.session, xr::Path::NULL).is_ok_and(|s| s.current_state);
+        let stick = self
+            .stick
+            .state(&xr.session, xr::Path::NULL)
+            .map_or([0.0; 2], |s| [s.current_state.x, s.current_state.y]);
+        Some(ShownController {
+            grip: posef_to_transform(&loc.pose),
+            inputs: ControllerInputs {
+                trigger: f(&self.trigger),
+                squeeze: f(&self.squeeze),
+                stick,
+                stick_click: b(&self.stick_click),
+                primary: b(&self.primary),
+                secondary: b(&self.secondary),
+                menu: b(&self.menu),
+            },
+        })
+    }
 }
 
 pub(super) struct OpenXrPointer {
@@ -185,9 +285,14 @@ impl OpenXrInputSource {
         let mut right_source = OpenXrHandSource::new(&mut action_set, "right")?;
         let mut fallback_source = OpenXrHandSource::new(&mut action_set, "handsfree")?;
 
+        let model_actions = [
+            ModelActions::new(xr, &action_set, "left")?,
+            ModelActions::new(xr, &action_set, "right")?,
+        ];
+
         let mut hands: [&mut OpenXrHandSource; 3] =
             [&mut left_source, &mut right_source, &mut fallback_source];
-        suggest_bindings(&xr.instance, &mut hands, pinch_click);
+        suggest_bindings(&xr.instance, &mut hands, pinch_click, &model_actions);
 
         xr.session.attach_action_sets(&[&action_set])?;
 
@@ -199,6 +304,9 @@ impl OpenXrInputSource {
             ],
             handsfree_pointer: OpenXrPointer::new(xr, fallback_source)?,
             camera_hands: None,
+            model_actions,
+            shown: [None, None],
+            debug_poses: [None, None],
         })
     }
 
@@ -243,6 +351,10 @@ impl OpenXrInputSource {
 
         let mut any_tracked = false;
         let old_handsfree = app.session.config.handsfree_pointer;
+        self.shown = [None, None];
+        self.debug_poses = [None, None];
+        let want_models =
+            app.session.config.show_controller_models || app.session.config.controller_axes;
 
         if app.input_state.picking_focus.is_none() {
             let should_disable_lerp = app.input_state.should_disable_lerp();
@@ -266,6 +378,16 @@ impl OpenXrInputSource {
                             == PointerSource::Hand
                     {
                         apply_hand_pointer(pointer, sample.as_ref(), xr.fps, lerp);
+                    } else if want_models && pointer.tracked {
+                        // the controller is the pointer: its model (at the grip) and the debug axes
+                        if let Some(s) = self.model_actions[i].read(xr) {
+                            if app.session.config.controller_axes {
+                                self.debug_poses[i] = Some((pointer.raw_pose, s.grip));
+                            }
+                            if app.session.config.show_controller_models {
+                                self.shown[i] = Some(s);
+                            }
+                        }
                     }
                 }
                 any_tracked |= pointer.tracked;
@@ -488,11 +610,9 @@ fn apply_hand_pointer(
     pointer.pose = match lerp_factor {
         Some(f) if pointer.tracked => {
             let f = (1.0 / (fps / 100.0) * f).clamp(0.1, 1.0);
-            let (cur_quat, cur_pos) = (Quat::from_affine3(&pointer.pose), pointer.pose.translation);
-            Affine3A::from_rotation_translation(
-                cur_quat.lerp(new_quat, f),
-                cur_pos.lerp(new_pos.into(), f).into(),
-            )
+            // direction smoothed, origin on the hand (see pointer_load_pose)
+            let cur_quat = Quat::from_affine3(&pointer.pose);
+            Affine3A::from_rotation_translation(cur_quat.lerp(new_quat, f), new_pos)
         }
         _ => h.pose,
     };
@@ -605,7 +725,7 @@ impl OpenXrPointer {
             .location_flags
             .contains(xr::SpaceLocationFlags::ORIENTATION_VALID)
         {
-            let (cur_quat, cur_pos) = (Quat::from_affine3(&pointer.pose), pointer.pose.translation);
+            let cur_quat = Quat::from_affine3(&pointer.pose);
 
             let (new_quat, new_pos) = unsafe {
                 (
@@ -617,9 +737,11 @@ impl OpenXrPointer {
             pointer.raw_pose = Affine3A::from_rotation_translation(new_quat, new_pos);
             if let Some(lerp_factor) = lerp_factor {
                 let lerp_factor = (1.0 / (xr.fps / 100.0) * lerp_factor).clamp(0.1, 1.0);
+                // only the direction is smoothed: the ray origin stays on the controller (a lerped origin trails
+                // the controller model by a few cm while it moves, so the ray seemed to leave beside the tip)
                 pointer.pose = Affine3A::from_rotation_translation(
                     cur_quat.lerp(new_quat, lerp_factor),
-                    cur_pos.lerp(new_pos.into(), lerp_factor).into(),
+                    new_pos,
                 );
             } else {
                 pointer.pose = pointer.raw_pose; // no lerp
@@ -862,6 +984,7 @@ fn suggest_bindings(
     instance: &xr::Instance,
     hands: &mut [&mut OpenXrHandSource; 3],
     pinch_click: bool,
+    model_actions: &[ModelActions; 2],
 ) {
     let profiles = load_xr_input_profiles();
 
@@ -938,6 +1061,12 @@ fn suggest_bindings(
             );
 
             add_custom!(profile.move_mouse, move_mouse, hands, bindings, instance);
+
+            // controller model (grip pose + moving parts): the model is a Touch v3, so Touch only
+            if profile.profile == "/interaction_profiles/oculus/touch_controller" {
+                bindings.extend(model_actions[0].touch_bindings(instance, true));
+                bindings.extend(model_actions[1].touch_bindings(instance, false));
+            }
 
             if instance
                 .suggest_interaction_profile_bindings(profile_path, &bindings)

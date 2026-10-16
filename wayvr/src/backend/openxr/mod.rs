@@ -44,6 +44,7 @@ pub mod monado_state;
 mod overlay;
 mod playspace;
 mod skybox;
+mod controller_render;
 mod swapchain;
 
 const VIEW_TYPE: xr::ViewConfigurationType = xr::ViewConfigurationType::PRIMARY_STEREO;
@@ -152,6 +153,21 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
     let gaze_laser_line = lines.allocate(&xr_state, &app)?;
 
     let hands_visual = hands::HandsVisual::new(&xr_state, &mut lines, &app);
+    // controller models (`show_controller_models`): a failure only logs, VR keeps running without them
+    let mut controller_renderer = if app.session.config.show_controller_models {
+        controller_render::ControllerRenderer::new(&xr_state, &app, system)
+            .inspect_err(|e| log::warn!("controller models off: {e:?}"))
+            .ok()
+    } else {
+        None
+    };
+    // debug axes at aim and grip (`controller_axes`): 3 lines x 2 poses x 2 hands
+    let mut axis_lines = vec![];
+    if app.session.config.controller_axes {
+        for _ in 0..12 {
+            axis_lines.push(lines.allocate(&xr_state, &app)?);
+        }
+    }
 
     let watch_id = overlays.lookup(WATCH_NAME).unwrap(); // want panic
 
@@ -396,6 +412,19 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
             hv.update(&xr_state, &app, &mut lines);
         }
 
+        if !axis_lines.is_empty() {
+            let mut ids = axis_lines.iter();
+            for (aim, grip) in input_source.debug_poses.iter().flatten() {
+                for (pose, len) in [(aim, 0.08), (grip, 0.05)] {
+                    for (a, b, rgba) in crate::backend::controller_model::axes(pose, len) {
+                        if let Some(&id) = ids.next() {
+                            lines.draw_between_rgba(id, a, b, rgba, app.input_state.hmd, 0.003);
+                        }
+                    }
+                }
+            }
+        }
+
         app.hid_provider.inner.commit();
 
         let watch = overlays.mut_by_id(watch_id).unwrap(); // want panic
@@ -466,6 +495,12 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
         }
 
         lines.render(&app, &mut futures)?;
+        if let Some(cr) = controller_renderer.as_mut()
+            && let Err(e) = cr.render(&app, &views, &input_source.shown, &mut futures)
+        {
+            log::warn!("controller models off after a render error: {e:?}");
+            controller_renderer = None;
+        }
         futures.wait()?;
         // End rendering
 
@@ -474,6 +509,7 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
         }
 
         // Layer composition
+        let mut projection_views = Vec::new();
         let mut layers = vec![];
         if let Some(skybox) = skybox.as_mut() {
             for (idx, layer) in skybox.present(&xr_state, &app)?.into_iter().enumerate() {
@@ -499,6 +535,13 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
             }
         }
 
+        if let Some(cr) = controller_renderer.as_mut()
+            && let Some(layer) = cr.present(&xr_state, &mut projection_views)?
+        {
+            // after the screens (they sort by distance + 100 - z order), before the rays (0.0)
+            layers.push((0.001, layer));
+        }
+
         for layer in lines.present(&xr_state)? {
             layers.push((0.0, layer));
         }
@@ -513,6 +556,7 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
                 CompositionLayer::Quad(ref l) => l as &xr::CompositionLayerBase<xr::Vulkan>,
                 CompositionLayer::Cylinder(ref l) => l as &xr::CompositionLayerBase<xr::Vulkan>,
                 CompositionLayer::Equirect2(ref l) => l as &xr::CompositionLayerBase<xr::Vulkan>,
+                CompositionLayer::Projection(ref l) => l as &xr::CompositionLayerBase<xr::Vulkan>,
             })
             .collect::<Vec<_>>();
 
@@ -606,6 +650,7 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
     // 1. Everything that owns swapchains or XR spaces/actions, while the session is alive.
     drop(input_source);
     drop(hands_visual);
+    drop(controller_renderer);
     drop(skybox);
     drop(delete_queue);
     drop(lines);
@@ -632,6 +677,7 @@ pub(super) enum CompositionLayer<'a> {
     Quad(xr::CompositionLayerQuad<'a, xr::Vulkan>),
     Cylinder(xr::CompositionLayerCylinderKHR<'a, xr::Vulkan>),
     Equirect2(xr::CompositionLayerEquirect2KHR<'a, xr::Vulkan>),
+    Projection(xr::CompositionLayerProjection<'a, xr::Vulkan>),
 }
 
 // applies chroma key settings.

@@ -6226,6 +6226,7 @@ dependencies = [
  "glam",
  "idmap",
  "idmap-derive",
+ "image",
  "image_dds",
  "input",
  "input-linux",

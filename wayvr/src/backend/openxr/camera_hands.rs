@@ -88,6 +88,7 @@ impl CameraHands {
                 .then(|| posef_to_transform(&loc.pose).translation.into())
         };
         Some(HandJoints {
+            wrist: at(xr::HandJoint::WRIST)?,
             index_proximal: at(xr::HandJoint::INDEX_PROXIMAL)?,
             thumb_tip: at(xr::HandJoint::THUMB_TIP)?,
             index_tip: at(xr::HandJoint::INDEX_TIP)?,

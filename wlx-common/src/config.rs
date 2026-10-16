@@ -622,6 +622,17 @@ pub struct GeneralConfig {
 	#[serde(default)]
 	pub controllers_in_work: bool,
 
+	/// OpenXR only: draw a 3D controller model (Oculus Touch v3 / Quest 2, WebXR input profiles, MIT) at each
+	/// controller's grip pose while that controller is the pointer, trigger/grip/stick/buttons animated, like SteamVR
+	/// draws its render models. Hidden while camera hands are the pointer. Read at startup (Touch profile only).
+	#[serde(default = "def_true")]
+	pub show_controller_models: bool,
+
+	/// OpenXR only, debug: draw axes at each controller's aim (ray origin) and grip pose: red +X, green +Y,
+	/// blue = forward (-Z, the ray direction). Read at startup.
+	#[serde(default)]
+	pub controller_axes: bool,
+
 	/// OpenXR only: pinch (XR_EXT_hand_interaction) clicks overlays. Read at startup.
 	#[serde(default = "def_true")]
 	pub hand_pinch_click: bool,

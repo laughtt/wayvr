@@ -17,10 +17,15 @@ pub const PINCH_OFF_M: f32 = 0.040;
 /// Shoulder estimate from the head: this far down and this far to the side (m).
 const SHOULDER_DOWN_M: f32 = 0.17;
 const SHOULDER_SIDE_M: f32 = 0.16;
+/// Share of the hand's own direction (wrist -> index knuckle) in the ray: the pure shoulder ray is steady but does not
+/// follow where the hand points (a hand turned 30 deg sideways moved the ray 0 deg), so the ray seemed "a bit off" the
+/// hand. 0.35 follows the hand noticeably and keeps most of the shoulder ray's steadiness (the wrist angle is noisy).
+pub const HAND_DIR_WEIGHT: f32 = 0.35;
 
 /// The joints the pointer needs (stage space).
 #[derive(Debug, Clone, Copy)]
 pub struct HandJoints {
+    pub wrist: Vec3,
     pub index_proximal: Vec3,
     pub thumb_tip: Vec3,
     pub index_tip: Vec3,
@@ -38,8 +43,9 @@ pub struct HandSample {
     pub grab: bool,
 }
 
-/// The ray of a hand: from an estimated shoulder through the index knuckle (steadier than the wrist angle and does
-/// not move when the fingers pinch), starting at the knuckle.
+/// The ray of a hand: starting at the index knuckle, along the direction from an estimated shoulder through the
+/// knuckle (steady, does not move when the fingers pinch) turned [`HAND_DIR_WEIGHT`] of the way towards the hand's
+/// own direction (wrist -> index knuckle, also unaffected by pinching), so the ray follows where the hand points.
 pub fn aim_pose(j: &HandJoints, left: bool, hmd: &Affine3A) -> Option<Affine3A> {
     let head = Vec3::from(hmd.translation);
     let mut right = Vec3::from(hmd.matrix3 * Vec3A::X);
@@ -52,7 +58,14 @@ pub fn aim_pose(j: &HandJoints, left: bool, hmd: &Affine3A) -> Option<Affine3A> 
     };
     let shoulder = head - Vec3::Y * SHOULDER_DOWN_M + right * side;
     let origin = j.index_proximal;
-    let dir = (origin - shoulder).try_normalize()?;
+    let from_shoulder = (origin - shoulder).try_normalize()?;
+    let dir = match (origin - j.wrist).try_normalize() {
+        Some(hand) => from_shoulder
+            .lerp(hand, HAND_DIR_WEIGHT)
+            .try_normalize()
+            .unwrap_or(from_shoulder),
+        None => from_shoulder,
+    };
     // up hint: world up, or the head's forward when the ray points straight up or down
     let up = if dir.dot(Vec3::Y).abs() > 0.98 {
         Vec3::from(hmd.matrix3 * Vec3A::NEG_Z)
@@ -145,9 +158,15 @@ mod tests {
     use super::*;
     use glam::Quat;
 
+    /// A hand pointing along -Z (wrist 9 cm behind the knuckle).
     fn joints(knuckle: Vec3, pinch_index: bool, pinch_middle: bool) -> HandJoints {
+        joints_dir(knuckle, Vec3::NEG_Z, pinch_index, pinch_middle)
+    }
+
+    fn joints_dir(knuckle: Vec3, hand_dir: Vec3, pinch_index: bool, pinch_middle: bool) -> HandJoints {
         let thumb = knuckle + Vec3::new(0.0, -0.03, -0.05);
         HandJoints {
+            wrist: knuckle - hand_dir.normalize() * 0.09,
             index_proximal: knuckle,
             thumb_tip: thumb,
             index_tip: if pinch_index {
@@ -184,16 +203,36 @@ mod tests {
             Vec3::new(0.0, 1.6, 0.0),
         );
         let knuckle = Vec3::new(-0.5, 1.43, 0.16);
-        let p = aim_pose(&joints(knuckle, false, false), true, &hmd).unwrap();
+        let p = aim_pose(&joints_dir(knuckle, Vec3::NEG_X, false, false), true, &hmd).unwrap();
         let fwd = Vec3::from(p.matrix3 * Vec3A::NEG_Z);
         assert!(fwd.distance(Vec3::NEG_X) < 1e-4, "{fwd}");
+    }
+
+    #[test]
+    fn ray_turns_with_the_hand() {
+        let hmd = Affine3A::from_translation(Vec3::new(0.0, 1.6, 0.0));
+        let knuckle = Vec3::new(0.16, 1.43, -0.5);
+        // hand turned 30 deg to the right of the shoulder ray (-Z)
+        let a = 30f32.to_radians();
+        let hand = Vec3::new(a.sin(), 0.0, -a.cos());
+        let p = aim_pose(&joints_dir(knuckle, hand, false, false), false, &hmd).unwrap();
+        let fwd = Vec3::from(p.matrix3 * Vec3A::NEG_Z);
+        let turned = fwd.angle_between(Vec3::NEG_Z).to_degrees();
+        assert!(fwd.x > 0.0 && (8.0..14.0).contains(&turned), "{fwd} {turned}");
+        // the ray still starts at the knuckle
+        assert!(Vec3::from(p.translation).distance(knuckle) < 1e-5);
+        // a degenerate wrist (on the knuckle) falls back to the shoulder ray
+        let mut j = joints(knuckle, false, false);
+        j.wrist = knuckle;
+        let p = aim_pose(&j, false, &hmd).unwrap();
+        assert!(Vec3::from(p.matrix3 * Vec3A::NEG_Z).distance(Vec3::NEG_Z) < 1e-4);
     }
 
     #[test]
     fn straight_up_does_not_break() {
         let hmd = Affine3A::from_translation(Vec3::new(0.0, 1.6, 0.0));
         let knuckle = Vec3::new(0.16, 2.2, 0.0);
-        let p = aim_pose(&joints(knuckle, false, false), false, &hmd).unwrap();
+        let p = aim_pose(&joints_dir(knuckle, Vec3::Y, false, false), false, &hmd).unwrap();
         assert!(p.is_finite());
         assert!(Vec3::from(p.matrix3 * Vec3A::NEG_Z).y > 0.99);
     }

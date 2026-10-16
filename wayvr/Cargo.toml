@@ -66,6 +66,7 @@ bytes = { workspace = true }
 chrono-tz = "0.10.4"
 config = "0.15.25"
 futures = "0.3.32"
+image = { version = "0.25.10", default-features = false, features = ["png"] }  # controller model texture
 image_dds = {
   version = "0.7.2",
   default-features = false,
