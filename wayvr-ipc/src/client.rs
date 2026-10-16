@@ -477,6 +477,14 @@ impl WayVRClient {
 		Ok(())
 	}
 
+	pub async fn fn_wlx_screen_numbers(
+		client: WayVRClientMutex,
+		params: packet_client::WlxScreenNumbersParams,
+	) -> anyhow::Result<()> {
+		send_only!(client, &PacketClient::WlxScreenNumbers(params));
+		Ok(())
+	}
+
 	pub async fn fn_wlx_show_hide(client: WayVRClientMutex) -> anyhow::Result<()> {
 		send_only!(client, &PacketClient::WlxShowHide);
 		Ok(())

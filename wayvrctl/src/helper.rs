@@ -211,6 +211,17 @@ pub async fn wlx_desk_screens(
     )
 }
 
+pub async fn wlx_screen_numbers(
+    state: &mut WayVRClientState,
+    params: wayvr_ipc::packet_client::WlxScreenNumbersParams,
+) {
+    handle_empty_result(
+        WayVRClient::fn_wlx_screen_numbers(state.wayvr_client.clone(), params)
+            .await
+            .context("failed to set the screen numbers"),
+    )
+}
+
 pub async fn wlx_screen_nudge(
     state: &mut WayVRClientState,
     params: wayvr_ipc::packet_client::WlxScreenNudgeParams,

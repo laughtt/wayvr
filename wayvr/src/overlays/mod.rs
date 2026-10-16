@@ -5,6 +5,7 @@ pub mod edit;
 pub mod keyboard;
 pub mod passthrough;
 pub mod screen;
+pub mod screen_numbers;
 pub mod toast;
 pub mod watch;
 pub mod wayvr;

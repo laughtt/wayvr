@@ -151,6 +151,28 @@ pub struct WlxScreenNudgeParams {
 	pub step: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WlxScreenNumbersAction {
+	/// Mode: never shown
+	Off,
+	/// Mode: shown for a few seconds when a screen is added or moved, or on flash (default)
+	OnDemand,
+	/// Mode: always shown
+	Always,
+	/// Show them now for the flash time (unless the mode is off)
+	Show,
+	/// Hide them now (until the next flash or screen change)
+	Hide,
+	/// Show them now for the flash time and highlight screen `n` (1..=6) if given
+	Flash,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WlxScreenNumbersParams {
+	pub action: WlxScreenNumbersAction,
+	pub n: Option<u8>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PacketClient {
 	Handshake(Handshake),
@@ -186,4 +208,6 @@ pub enum PacketClient {
 	WlxGazeLaser(Option<bool>),
 	/// Hands only, controllers ignored entirely (on) / controllers work too (off) (`controllers_in_work` = !on): Some(on/off), None = toggle (appended last)
 	WlxPreferHands(Option<bool>),
+	/// Screen number badges: mode, show/hide now, flash (optionally highlighting screen N) (appended last)
+	WlxScreenNumbers(WlxScreenNumbersParams),
 }

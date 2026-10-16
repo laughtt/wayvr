@@ -12,6 +12,7 @@ pub enum WayVRSignal {
     SetSkybox(Option<String>),
     ScreenNudge(wayvr_ipc::packet_client::WlxScreenNudgeParams),
     DeskScreens(wayvr_ipc::packet_client::WlxDeskScreensParams),
+    ScreenNumbers(wayvr_ipc::packet_client::WlxScreenNumbersParams),
     /// The gaze laser: Some(on/off), None = toggle
     GazeLaser(Option<bool>),
     /// Hands only in Work (`controllers_in_work` = !on): Some(on/off), None = toggle

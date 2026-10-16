@@ -129,6 +129,20 @@ pub enum GazeLaserStyle {
 	Ray,
 }
 
+/// Screen number badges on the desk screens (`screen_numbers`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenNumbers {
+	/// Never shown
+	Off,
+	/// Shown for a few seconds when a screen is added or moved, or on `wayvrctl screen-numbers flash`
+	#[default]
+	#[serde(alias = "ondemand", alias = "on-demand")]
+	OnDemand,
+	/// Always shown
+	Always,
+}
+
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, EnumProperty, VariantArray)]
 pub enum HandsfreePointer {
 	#[strum(props(Translation = "APP_SETTINGS.OPTION.NONE"))]
@@ -666,6 +680,11 @@ pub struct GeneralConfig {
 	/// Gaze laser opacity, 0..1.
 	#[serde(default = "def_gaze_laser_alpha")]
 	pub gaze_laser_alpha: f32,
+
+	/// Number badges (1-6) at the top centre of every desk screen: off, on_demand (default, ~5 s when a screen is
+	/// added or moved or voice flashes them) or always. Change at run time with `wayvrctl screen-numbers`.
+	#[serde(default)]
+	pub screen_numbers: ScreenNumbers,
 
 	/// Shortest fixation (ms) that counts as "looked at" for `wayvrctl gaze` (`last_stable`, `history`).
 	#[serde(default = "def_gaze_fixation_ms")]

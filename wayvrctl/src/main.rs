@@ -16,7 +16,7 @@ use wayvr_ipc::{
 
 use crate::helper::{
     WayVRClientState, wlr_input_capture, wlx_device_haptics, wlx_handsfree, wlx_input_state,
-    wlx_desk_layout, wlx_desk_screens, wlx_screen_nudge, wlx_gaze, wlx_gaze_laser, wlx_prefer_hands, wlx_panel_modify, wlx_recenter, wlx_reset_screens, wlx_set_skybox, wlx_show_hide, wlx_switch_set, wvr_process_get, wvr_process_launch,
+    wlx_desk_layout, wlx_desk_screens, wlx_screen_nudge, wlx_screen_numbers, wlx_gaze, wlx_gaze_laser, wlx_prefer_hands, wlx_panel_modify, wlx_recenter, wlx_reset_screens, wlx_set_skybox, wlx_show_hide, wlx_switch_set, wvr_process_get, wvr_process_launch,
     wvr_process_list, wvr_process_terminate, wvr_window_list, wvr_window_set_visible,
 };
 
@@ -217,6 +217,23 @@ async fn run_once(state: &mut WayVRClientState, args: Args) -> anyhow::Result<()
                 },
             )
             .await;
+        }
+        Subcommands::ScreenNumbers { action, n } => {
+            use packet_client::WlxScreenNumbersAction as A;
+            if let Some(n) = n
+                && !(1..=6).contains(&n)
+            {
+                anyhow::bail!("screen number must be 1 to 6, not {n}");
+            }
+            let action = match action {
+                ScreenNumbersArg::Off => A::Off,
+                ScreenNumbersArg::Ondemand => A::OnDemand,
+                ScreenNumbersArg::Always => A::Always,
+                ScreenNumbersArg::Show => A::Show,
+                ScreenNumbersArg::Hide => A::Hide,
+                ScreenNumbersArg::Flash => A::Flash,
+            };
+            wlx_screen_numbers(state, packet_client::WlxScreenNumbersParams { action, n }).await;
         }
         Subcommands::ScreenNudge { name, dir, step } => {
             use packet_client::WlxNudgeDir;
@@ -430,6 +447,13 @@ enum Subcommands {
         #[arg(required = true)]
         specs: Vec<String>,
     },
+    /// Screen number badges (1-6, top centre of each desk screen). Mode: off | ondemand (default) | always.
+    /// Now: show (flash all for ~5 s) | hide | flash [N] (flash all and highlight screen N)
+    ScreenNumbers {
+        action: ScreenNumbersArg,
+        /// Screen to highlight (flash only), 1 = main, 2 = left, 3 = right, 4 = up, 5 = up-left, 6 = up-right
+        n: Option<u8>,
+    },
     /// Move/scale a screen in space: left|right|up|down|closer|farther|bigger|smaller
     ScreenNudge {
         /// Screen (overlay) name, e.g. SUNSHINE
@@ -473,6 +497,17 @@ enum Subcommands {
     InputCapture {
         command: GrabRelease,
     },
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum ScreenNumbersArg {
+    Off,
+    #[value(name = "ondemand", alias = "on-demand")]
+    Ondemand,
+    Always,
+    Show,
+    Hide,
+    Flash,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]

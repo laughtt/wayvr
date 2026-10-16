@@ -1,0 +1,19 @@
+<layout>
+  <elements>
+    <div interactable="0">
+      <!-- soft shadow: a larger translucent pill behind the badge -->
+      <rectangle
+        id="shadow"
+        padding="7" color="#00000055" round="100%">
+        <rectangle
+          id="pill"
+          flex_direction="row" align_items="baseline" justify_content="center" gap="12"
+          padding_left="30" padding_right="30" padding_top="6" padding_bottom="10"
+          color="#0B1420F0" border_color="#FFFFFF88" border="3" round="100%">
+          <label id="num" size="88" weight="bold" color="#FFFFFF" />
+          <label id="slot" size="30" weight="bold" color="#9FB4C8" />
+        </rectangle>
+      </rectangle>
+    </div>
+  </elements>
+</layout>

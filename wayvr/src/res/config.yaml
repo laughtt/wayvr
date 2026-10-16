@@ -248,6 +248,11 @@
 ## Laser opacity, 0.0 .. 1.0
 #gaze_laser_alpha: 0.35
 
+## Number badges (1 main, 2 left, 3 right, 4 up, 5 up-left, 6 up-right) at the top centre of each desk screen.
+## on_demand → shown ~5 s when a screen is added or moved, or on `wayvrctl screen-numbers flash [N]`; always; off.
+## Change at run time: `wayvrctl screen-numbers off|ondemand|always|show|hide|flash [N]`.
+#screen_numbers: on_demand
+
 ## Shortest fixation (ms) that counts as "looked at" for `wayvrctl gaze`
 #gaze_fixation_ms: 200
 

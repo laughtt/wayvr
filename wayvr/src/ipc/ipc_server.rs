@@ -470,6 +470,9 @@ impl Connection {
             PacketClient::WlxGazeLaser(on) => {
                 params.signals.send(WayVRSignal::GazeLaser(on));
             }
+            PacketClient::WlxScreenNumbers(p) => {
+                params.signals.send(WayVRSignal::ScreenNumbers(p));
+            }
             PacketClient::WlxPreferHands(on) => {
                 params.signals.send(WayVRSignal::PreferHands(on));
             }

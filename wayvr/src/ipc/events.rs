@@ -123,6 +123,11 @@ fn desk_screens<O>(
         matches!(c, OverlayCategory::Screen | OverlayCategory::WayVR | OverlayCategory::Mirror)
     }
 
+    crate::overlays::screen_numbers::note_desk_screens(
+        &p.screens.iter().map(|s| (s.name.as_str().into(), s.slot, s.visible)).collect::<Vec<_>>(),
+        p.place,
+    );
+
     let hmd = app.input_state.hmd;
     let pivot = Vec3A::from(hmd.translation);
     let curvature = if p.curvature.is_finite() { p.curvature.clamp(0.0, 1.0) } else { 0.0 };
@@ -329,6 +334,7 @@ fn screen_nudge<O>(
     let pivot = Vec3A::from(app.input_state.hmd.translation);
     let nt = grabmath::nudge(&t, size, pivot, dir, p.step);
     log::info!("screen nudge: '{}' {:?} step {}", p.name, p.dir, p.step);
+    crate::overlays::screen_numbers::note_screen_moved(&p.name);
     app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
         OverlaySelector::Id(id),
         Box::new(move |app, cfg| {
@@ -441,6 +447,7 @@ where
     O: Default,
 {
     desk_housekeeping(app, _overlays);
+    crate::overlays::screen_numbers::tick(app, _overlays);
 
     while let Some(signal) = app.wayvr_signals.read() {
         match signal {
@@ -469,6 +476,7 @@ where
             }
             WayVRSignal::DeskLayout(p) => desk_layout(app, _overlays, p),
             WayVRSignal::DeskScreens(p) => desk_screens(app, _overlays, p),
+            WayVRSignal::ScreenNumbers(p) => crate::overlays::screen_numbers::handle(app, p),
             WayVRSignal::ScreenNudge(p) => screen_nudge(app, _overlays, p),
             WayVRSignal::SetSkybox(s) => {
                 log::info!("backdrop: {s:?}");
