@@ -20,6 +20,7 @@ use crate::{
 
 use super::{
     CompositionLayer, XrState,
+    ocean_sky::OceanSky,
     swapchain::{WlxSwapchain, create_swapchain},
 };
 
@@ -31,10 +32,28 @@ pub(super) struct Skybox {
     grid_pose: xr::Posef,
     grid_color_scale_bias_khr: Option<Box<xr::sys::CompositionLayerColorScaleBiasKHR>>,
     current_skybox: Arc<str>,
+    /// Animated ocean (skybox name `ocean:<quality>`) instead of a picture.
+    ocean: Option<OceanSky>,
 }
 
 impl Skybox {
     pub fn new(xr: &XrState, app: &AppState) -> anyhow::Result<Self> {
+        if let Some(q) = crate::ocean::parse_spec(&app.session.config.skybox_texture) {
+            match OceanSky::new(xr, app, q) {
+                Ok(ocean) => {
+                    return Ok(Self {
+                        view: None,
+                        sky: None,
+                        grid: None,
+                        grid_pose: translation_rotation_to_posef(Vec3A::ZERO, Quat::from_rotation_x(PI * -0.5)),
+                        grid_color_scale_bias_khr: None,
+                        current_skybox: app.session.config.skybox_texture.clone(),
+                        ocean: Some(ocean),
+                    });
+                }
+                Err(e) => log::warn!("ocean background failed, using the default sky: {e:?}"),
+            }
+        }
         let mut command_buffer = app
             .gfx
             .create_xfer_command_buffer(CommandBufferUsage::OneTimeSubmit)?;
@@ -106,6 +125,7 @@ impl Skybox {
             grid_pose: translation_rotation_to_posef(Vec3A::ZERO, Quat::from_rotation_x(PI * -0.5)),
             grid_color_scale_bias_khr,
             current_skybox,
+            ocean: None,
         })
     }
 
@@ -245,6 +265,9 @@ impl Skybox {
         app: &AppState,
         buf: &mut GpuFutures,
     ) -> anyhow::Result<()> {
+        if let Some(ocean) = self.ocean.as_mut() {
+            return ocean.render(app, buf);
+        }
         self.prepare_sky(xr, app, buf)?;
         self.prepare_grid(xr, app, buf)?;
         Ok(())
@@ -268,6 +291,22 @@ impl Skybox {
                 z: app.input_state.hmd.translation.z,
             },
         };
+
+        if let Some(ocean) = self.ocean.as_mut() {
+            // the ocean has no floor grid: just the sphere
+            ocean.swapchain.ensure_image_released()?;
+            let sky = xr::CompositionLayerEquirect2KHR::new()
+                .layer_flags(xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA)
+                .pose(pose)
+                .radius(100.0)
+                .sub_image(ocean.swapchain.get_subimage(0))
+                .eye_visibility(xr::EyeVisibility::BOTH)
+                .space(&xr.stage)
+                .central_horizontal_angle(HORIZ_ANGLE)
+                .upper_vertical_angle(HI_VERT_ANGLE)
+                .lower_vertical_angle(LO_VERT_ANGLE);
+            return Ok(vec![CompositionLayer::Equirect2(sky)]);
+        }
 
         self.sky.as_mut().unwrap().ensure_image_released()?;
 

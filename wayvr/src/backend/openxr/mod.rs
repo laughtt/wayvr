@@ -43,6 +43,7 @@ mod lines;
 pub mod monado_state;
 mod overlay;
 mod playspace;
+mod ocean_sky;
 mod skybox;
 mod controller_render;
 mod swapchain;

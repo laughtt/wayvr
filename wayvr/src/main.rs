@@ -24,6 +24,7 @@ mod config;
 mod graphics;
 mod gui;
 mod ipc;
+mod ocean;
 mod overlays;
 mod shaders;
 mod state;
