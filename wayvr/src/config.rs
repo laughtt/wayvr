@@ -352,6 +352,12 @@ mod tests {
     }
 
     #[test]
+    fn menu_open_at_start_reads_from_conf_d_yaml_and_is_off_by_default() {
+        assert!(!parse("menu_panel: vr_home\n").menu_open_at_start);
+        assert!(parse("menu_panel: vr_home\nmenu_open_at_start: true\n").menu_open_at_start);
+    }
+
+    #[test]
     fn menu_panel_accepts_any_overlay_name() {
         assert_eq!(
             parse("menu_panel: Dashboard\n").menu_panel.as_deref(),

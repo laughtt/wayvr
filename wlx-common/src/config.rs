@@ -496,6 +496,11 @@ pub struct GeneralConfig {
 	#[serde(default)]
 	pub menu_panel: Option<Arc<str>>,
 
+	/// Show the `menu_panel` overlay once when WayVR starts (in front of the head), instead of only on the `menu`
+	/// binding: the VR home of omarchyvr (`menu_open_at_start: true` in conf.d). Default false. Not saved by the app.
+	#[serde(default)]
+	pub menu_open_at_start: bool,
+
 	#[serde(default)]
 	pub capture_method: CaptureMethod,
 

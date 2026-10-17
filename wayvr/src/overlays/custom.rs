@@ -69,6 +69,12 @@ pub fn menu_state(width: f32) -> OverlayWindowState {
     }
 }
 
+/// Is the Work menu / VR home panel shown when WayVR starts? Only the panel `menu_panel` names, and only with
+/// `menu_open_at_start` (the VR home); otherwise it waits for the `menu` binding.
+pub fn menu_shown_at_spawn(is_menu: bool, menu_open_at_start: bool) -> bool {
+    is_menu && menu_open_at_start
+}
+
 pub fn create_custom(app: &mut AppState, name: Arc<str>) -> Option<OverlayWindowConfig> {
     let params = NewGuiPanelParams {
         external_xml: true,
@@ -150,10 +156,11 @@ pub fn create_custom(app: &mut AppState, name: Arc<str>) -> Option<OverlayWindow
         default_state = menu_state(MENU_WIDTH_M);
     }
 
+    let open_at_start = menu_shown_at_spawn(menu, app.session.config.menu_open_at_start);
     Some(OverlayWindowConfig {
         name,
         category: OverlayCategory::Panel,
-        show_on_spawn: fixed,
+        show_on_spawn: fixed || open_at_start,
         global: menu,
         default_state,
         ..OverlayWindowConfig::from_backend(Box::new(panel))
@@ -232,6 +239,13 @@ mod tests {
         for axis in [m.x_axis, m.y_axis, m.z_axis] {
             assert!((axis.length() - MENU_WIDTH_M).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn the_menu_opens_at_start_only_when_asked_and_only_the_menu() {
+        assert!(menu_shown_at_spawn(true, true), "the VR home shows at start");
+        assert!(!menu_shown_at_spawn(true, false), "the Work menu waits for the menu button");
+        assert!(!menu_shown_at_spawn(false, true), "other custom panels are not affected");
     }
 
     #[test]

@@ -113,6 +113,7 @@ mod tests {
 	const INDEX: &str = "/interaction_profiles/valve/index_controller";
 	const VIVE: &str = "/interaction_profiles/htc/vive_controller";
 	const LEFT_MENU_CLICK: &str = "/user/hand/left/input/menu/click";
+	const RIGHT_SYSTEM_CLICK: &str = "/user/hand/right/input/system/click";
 
 	fn profile(id: &str) -> OpenXrInputProfile {
 		default_xr_input_profiles()
@@ -149,7 +150,13 @@ mod tests {
 			"{:?}",
 			menu.left
 		);
-		assert!(menu.right.is_none() && menu.handsfree.is_none());
+		// the right hand's menu button (Monado: /input/system/click on the right Touch) opens the same menu
+		assert!(
+			matches!(&menu.right, Some(OneOrMany::One(p)) if p == RIGHT_SYSTEM_CLICK),
+			"{:?}",
+			menu.right
+		);
+		assert!(menu.handsfree.is_none());
 		// a single press: a double or triple click would not open it at the first press
 		assert!(!menu.double_click.unwrap_or(false) && !menu.triple_click.unwrap_or(false));
 	}
@@ -166,6 +173,16 @@ mod tests {
 			.unwrap()
 			.iter()
 			.filter(|(name, action)| name.as_str() != "profile" && action.to_string().contains(LEFT_MENU_CLICK))
+			.map(|(name, _)| name.clone())
+			.collect();
+		assert_eq!(users, ["menu"]);
+		// nor the right system button
+		let users: Vec<String> = serde_json::to_value(&touch)
+			.unwrap()
+			.as_object()
+			.unwrap()
+			.iter()
+			.filter(|(name, action)| name.as_str() != "profile" && action.to_string().contains(RIGHT_SYSTEM_CLICK))
 			.map(|(name, _)| name.clone())
 			.collect();
 		assert_eq!(users, ["menu"]);

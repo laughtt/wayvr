@@ -19,7 +19,8 @@
 // open or close the Work menu: the overlay named by the `menu_panel` setting (conf.d YAML: `menu_panel: work_menu`).
 // A custom panel named there is shown afresh in front of your head each time (about 0.6 m ahead, facing you, not
 // grabbable) and hidden by the same press. Without `menu_panel` (or when no overlay has that name) it toggles the
-// dashboard like toggle_dashboard. Oculus Touch: the left menu button (it no longer drags or resets the stage).
+// dashboard like toggle_dashboard. Oculus Touch: the left menu button (it no longer drags or resets the stage) and
+// the right system button. `menu_open_at_start: true` shows that panel once when WayVR starts (the VR home).
 // Work with camera hands has no buttons: use the "Exit Work" button on the watch there.
 //
 // -- space_rotate --
@@ -127,8 +128,11 @@
     },
     // left menu button: open / close the Work menu (single press). space_drag and space_reset used to sit on this
     // button and are unbound on Touch now (a double press would also have toggled the menu twice).
+    // right system button (the Pimax controllers' right menu / Pi button; Monado presents it as system/click): the
+    // same menu, so either hand's menu button opens the VR home / Work menu (omarchyvr docs/VR-HOME.md).
     menu: {
       left: "/user/hand/left/input/menu/click",
+      right: "/user/hand/right/input/system/click",
     },
     pin: {
       left: "/user/hand/left/input/x/click",
