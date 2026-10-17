@@ -477,14 +477,18 @@ pub fn interact<O>(
 where
     O: Default,
 {
-    // gaze has priority: controllers do not hover (unless they hold a grab)
+    // gaze has priority: controllers do not hover (unless they hold a grab); only with gaze input on (gaze::gate)
     let gaze_first = {
+        use crate::backend::gaze::gate;
         let input = &app.input_state;
-        app.session.config.gaze_pointer
-            && app.session.config.gaze_over_controllers
-            && input.gaze.active
-            && input.picking_focus.is_none()
-            && !input.pointers.iter().any(|p| p.handsfree)
+        let cfg = &app.session.config;
+        gate::over_controllers(cfg.gaze_pointer, cfg.gaze_over_controllers)
+            && gate::may_point(
+                cfg.gaze_pointer,
+                input.gaze.active,
+                !input.picking_focus.is_none(),
+                input.pointers.iter().any(|p| p.handsfree),
+            )
     };
     let hand = |idx: usize, overlays: &mut OverlayWindowManager<O>, app: &mut AppState| {
         if gaze_first && app.input_state.pointers[idx].interaction.grabbed.is_none() {
@@ -536,7 +540,8 @@ where
     let (laser_on, style, min_ms) = (cfg.gaze_laser, cfg.gaze_laser_style, cfg.gaze_fixation_ms);
     let gaze = &mut app.input_state.gaze;
     gaze.tracking = tracking;
-    gaze.reporting = cfg.gaze_target || cfg.gaze_pointer;
+    // targets for `wayvrctl gaze` (voice "this") only with gaze input on: by default the gaze is a visual point
+    gaze.reporting = crate::backend::gaze::gate::reporting(cfg.gaze_pointer);
     gaze.laser_on = laser_on;
     gaze.laser = None;
     if !tracking {
@@ -658,10 +663,12 @@ fn interact_gaze<O>(
     O: Default,
 {
     let input = &app.input_state;
-    let usable = app.session.config.gaze_pointer
-        && input.gaze.active
-        && input.picking_focus.is_none()
-        && !input.pointers.iter().any(|p| p.handsfree);
+    let usable = crate::backend::gaze::gate::may_point(
+        app.session.config.gaze_pointer,
+        input.gaze.active,
+        !input.picking_focus.is_none(),
+        input.pointers.iter().any(|p| p.handsfree),
+    );
 
     // a controller slot is free if its ray hits nothing and it is not grabbing
     let free = |i: usize| hits[i].0.is_none() && input.pointers[i].interaction.grabbed.is_none();
@@ -685,7 +692,7 @@ fn interact_gaze<O>(
     // "look and click": a controller click that is not aimed at an overlay clicks where we look
     let input = &app.input_state;
     let trigger = (0..2).any(|i| input.pointers[i].now.click && hits[i].0.is_none());
-    let dwell_ms = input.gaze.dwell_ms;
+    let dwell_ms = crate::backend::gaze::gate::dwell_ms(app.session.config.gaze_pointer, input.gaze.dwell_ms);
     let last_hit = input.gaze.last_hit;
     let dwell = app
         .input_state

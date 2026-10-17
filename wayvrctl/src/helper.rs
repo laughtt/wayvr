@@ -222,6 +222,17 @@ pub async fn wlx_screen_numbers(
     )
 }
 
+pub async fn wlx_screen_place(
+    state: &mut WayVRClientState,
+    params: wayvr_ipc::packet_client::WlxScreenPlaceParams,
+) {
+    handle_empty_result(
+        WayVRClient::fn_wlx_screen_place(state.wayvr_client.clone(), params)
+            .await
+            .context("failed to place the screen"),
+    )
+}
+
 pub async fn wlx_screen_nudge(
     state: &mut WayVRClientState,
     params: wayvr_ipc::packet_client::WlxScreenNudgeParams,

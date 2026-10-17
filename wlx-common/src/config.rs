@@ -671,7 +671,8 @@ pub struct GeneralConfig {
 	pub gaze_deadzone_deg: f32,
 
 	/// OpenXR only: silent gaze tracking. The gaze is ray-cast against the overlays every frame without hovering,
-	/// clicking or moving the mouse; `wayvrctl gaze` reports what is looked at (fixations, last stable fixation).
+	/// clicking or moving the mouse; `wayvrctl gaze` reports what is looked at only while `gaze_pointer` (the one gaze
+	/// input gate, `backend::gaze::gate`) is on.
 	#[serde(default)]
 	pub gaze_target: bool,
 

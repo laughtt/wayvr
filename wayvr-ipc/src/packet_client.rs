@@ -151,6 +151,32 @@ pub struct WlxScreenNudgeParams {
 	pub step: f32,
 }
 
+/// Where `WlxScreenPlace` puts a screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WlxPlaceRel {
+	/// Left of the reference screen (without one: of its nearest neighbour on the left)
+	Left,
+	Right,
+	/// Above
+	Up,
+	/// Below
+	Down,
+	/// Straight in front of the head ("bring it here")
+	Front,
+	/// Change places with the reference screen
+	Swap,
+}
+
+/// Place screen `name` once, from the current head position, so that from there it overlaps no other screen: beside
+/// `of` (or its nearest neighbour on that side), in front, or swapped with `of`; the other screens shift minimally
+/// along the arc around the head.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WlxScreenPlaceParams {
+	pub name: String,
+	pub rel: WlxPlaceRel,
+	pub of: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WlxScreenNumbersAction {
 	/// Mode: never shown
@@ -210,4 +236,6 @@ pub enum PacketClient {
 	WlxPreferHands(Option<bool>),
 	/// Screen number badges: mode, show/hide now, flash (optionally highlighting screen N) (appended last)
 	WlxScreenNumbers(WlxScreenNumbersParams),
+	/// Place a screen relative to another as seen from the head now; the others make room (appended last)
+	WlxScreenPlace(WlxScreenPlaceParams),
 }

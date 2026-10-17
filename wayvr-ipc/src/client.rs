@@ -450,6 +450,14 @@ impl WayVRClient {
 		Ok(())
 	}
 
+	pub async fn fn_wlx_screen_place(
+		client: WayVRClientMutex,
+		params: packet_client::WlxScreenPlaceParams,
+	) -> anyhow::Result<()> {
+		send_only!(client, &PacketClient::WlxScreenPlace(params));
+		Ok(())
+	}
+
 	pub async fn fn_wlx_set_skybox(client: WayVRClientMutex, skybox: Option<String>) -> anyhow::Result<()> {
 		send_only!(client, &PacketClient::WlxSetSkybox(skybox));
 		Ok(())

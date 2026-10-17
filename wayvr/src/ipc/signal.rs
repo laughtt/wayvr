@@ -11,6 +11,7 @@ pub enum WayVRSignal {
     DeskLayout(wayvr_ipc::packet_client::WlxDeskLayoutParams),
     SetSkybox(Option<String>),
     ScreenNudge(wayvr_ipc::packet_client::WlxScreenNudgeParams),
+    ScreenPlace(wayvr_ipc::packet_client::WlxScreenPlaceParams),
     DeskScreens(wayvr_ipc::packet_client::WlxDeskScreensParams),
     ScreenNumbers(wayvr_ipc::packet_client::WlxScreenNumbersParams),
     /// The gaze laser: Some(on/off), None = toggle

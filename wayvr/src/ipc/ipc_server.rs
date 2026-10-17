@@ -449,6 +449,9 @@ impl Connection {
             PacketClient::WlxScreenNudge(p) => {
                 params.signals.send(WayVRSignal::ScreenNudge(p));
             }
+            PacketClient::WlxScreenPlace(p) => {
+                params.signals.send(WayVRSignal::ScreenPlace(p));
+            }
             PacketClient::WlxDeskScreens(p) => {
                 params.signals.send(WayVRSignal::DeskScreens(p));
             }

@@ -505,8 +505,11 @@ impl OpenXrInputSource {
             _ => None,
         };
 
-        let (smoothing, deadzone, dwell) =
-            (cfg.gaze_smoothing, cfg.gaze_deadzone_deg, cfg.gaze_dwell_ms);
+        let (smoothing, deadzone, dwell) = (
+            cfg.gaze_smoothing,
+            cfg.gaze_deadzone_deg,
+            crate::backend::gaze::gate::dwell_ms(cfg.gaze_pointer, cfg.gaze_dwell_ms),
+        );
         app.input_state
             .gaze
             .feed(raw, smoothing, deadzone, dwell, Instant::now());
@@ -640,7 +643,12 @@ impl OpenXrPointer {
         hmd_tracked: bool,
         handsfree_state: &PointerState,
     ) -> anyhow::Result<()> {
-        match session.config.handsfree_pointer {
+        // the eyes are the pointer only with gaze input on (gaze::gate); otherwise the head pointer of the same kind
+        let mode = crate::backend::gaze::gate::handsfree(
+            session.config.handsfree_pointer,
+            session.config.gaze_pointer,
+        );
+        match mode {
             HandsfreePointer::None => return Ok(()),
             HandsfreePointer::Hmd | HandsfreePointer::HmdOnly => {
                 pointer.tracked = hmd_tracked;
@@ -670,7 +678,7 @@ impl OpenXrPointer {
 
         pointer.handsfree = pointer.tracked;
         if matches!(
-            session.config.handsfree_pointer,
+            mode,
             HandsfreePointer::HmdOnly | HandsfreePointer::EyeTrackingOnly
         ) {
             // input from wayvrctl

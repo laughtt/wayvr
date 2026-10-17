@@ -215,6 +215,9 @@
 ## Gaze only hovers; click with a controller trigger while looking ("look and click").
 ## A controller ray that is pointing at an overlay always has priority over gaze.
 ## Does nothing if the runtime has no eye tracking.
+## This is the ONE gate for gaze input: while it is false the eyes never hover, click, focus, move the cursor or
+## report a target (gaze_over_controllers, gaze_dwell_ms and the eye-tracking handsfree modes do nothing; the
+## handsfree eye modes fall back to the head pointer). Only the visual gaze dot (gaze_laser) shows.
 #gaze_pointer: false
 
 ## Gaze has priority over controller rays while gaze is valid: controllers do not hover/point, a controller

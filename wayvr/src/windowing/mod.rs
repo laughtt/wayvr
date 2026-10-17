@@ -6,6 +6,7 @@ use crate::windowing::window::scalar_scale;
 
 pub mod backend;
 pub mod grabmath;
+pub mod viewlayout;
 pub mod manager;
 pub mod set;
 pub mod window;

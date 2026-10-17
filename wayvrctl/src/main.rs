@@ -16,7 +16,7 @@ use wayvr_ipc::{
 
 use crate::helper::{
     WayVRClientState, wlr_input_capture, wlx_device_haptics, wlx_handsfree, wlx_input_state,
-    wlx_desk_layout, wlx_desk_screens, wlx_screen_nudge, wlx_screen_numbers, wlx_gaze, wlx_gaze_laser, wlx_prefer_hands, wlx_panel_modify, wlx_recenter, wlx_reset_screens, wlx_set_skybox, wlx_show_hide, wlx_switch_set, wvr_process_get, wvr_process_launch,
+    wlx_desk_layout, wlx_desk_screens, wlx_screen_nudge, wlx_screen_place, wlx_screen_numbers, wlx_gaze, wlx_gaze_laser, wlx_prefer_hands, wlx_panel_modify, wlx_recenter, wlx_reset_screens, wlx_set_skybox, wlx_show_hide, wlx_switch_set, wvr_process_get, wvr_process_launch,
     wvr_process_list, wvr_process_terminate, wvr_window_list, wvr_window_set_visible,
 };
 
@@ -252,6 +252,22 @@ async fn run_once(state: &mut WayVRClientState, args: Args) -> anyhow::Result<()
             };
             wlx_screen_nudge(state, packet_client::WlxScreenNudgeParams { name, dir, step }).await;
         }
+        Subcommands::ScreenPlace { name, rel, of } => {
+            use packet_client::WlxPlaceRel;
+            let rel = match rel.as_str() {
+                "left" => WlxPlaceRel::Left,
+                "right" => WlxPlaceRel::Right,
+                "up" | "above" => WlxPlaceRel::Up,
+                "down" | "below" => WlxPlaceRel::Down,
+                "front" | "here" => WlxPlaceRel::Front,
+                "swap" => WlxPlaceRel::Swap,
+                other => anyhow::bail!("bad place '{other}': must be left, right, up, down, front or swap"),
+            };
+            if rel == WlxPlaceRel::Swap && of.is_none() {
+                anyhow::bail!("swap needs --of OTHER");
+            }
+            wlx_screen_place(state, packet_client::WlxScreenPlaceParams { name, rel, of }).await;
+        }
         Subcommands::Skybox { name } => {
             let s = match name.as_str() {
                 "off" => None,
@@ -463,6 +479,18 @@ enum Subcommands {
         /// Fraction of the screen width (left/right), height (up/down), distance (closer/farther) or size (bigger/smaller)
         #[arg(short, long, default_value = "0.25")]
         step: f32,
+    },
+    /// Place a screen once, from where your head is now, so it overlaps no other screen; the others make room.
+    /// left|right|up|down: beside --of OTHER (default: its nearest neighbour on that side, i.e. one place over);
+    /// front: straight in front of you; swap: change places with --of OTHER
+    ScreenPlace {
+        /// Screen (overlay) name, e.g. PIMAX-LEFT
+        name: String,
+        /// left|right|up|down|front|swap
+        rel: String,
+        /// The reference screen (overlay name)
+        #[arg(long)]
+        of: Option<String>,
     },
     /// Backdrop over the main app: off, default (built-in sky) or a DDS file relative to the WayVR config root
     Skybox { name: String },

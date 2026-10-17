@@ -1151,27 +1151,92 @@ impl<T> OverlayWindowManager<T> {
         }
     }
 
-    /// Puts every active screen back in front of the head as a world-locked (Static) overlay.
+    /// Puts every active screen back in the default layout around the head (viewlayout::default_layout: main
+    /// straight ahead 2.5 m away, 2 m wide; left, right, up, up-left, up-right around it by their badge number or
+    /// `PIMAX-*` output name; any other screen beside them), world-locked (Static), none overlapping from the head.
     pub fn reset_screens(&mut self, app: &mut AppState) {
+        use crate::windowing::viewlayout::{self, Screen as VScreen, Slot};
+        const WIDTH: f32 = 2.0;
+        const DISTANCE: f32 = 2.5;
         let hmd = app.input_state.hmd;
-        let mut slot = 0;
-        for o in self.overlays.values_mut() {
+        let eye = hmd.translation;
+        let mut items: Vec<(OverlayID, Option<Slot>, VScreen)> = Vec::new();
+        for (id, o) in self.overlays.iter_mut() {
             if !matches!(
                 o.config.category,
                 OverlayCategory::Screen | OverlayCategory::Mirror | OverlayCategory::WayVR
-            ) {
+            ) || !o.config.is_active()
+            {
                 continue;
             }
-            let Some(state) = o.config.active_state.as_mut() else {
-                continue;
-            };
-            log::info!("reset screens: {} -> default position (slot {slot})", o.config.name);
+            // the reset size: WIDTH wide (landscape) at the screen's own aspect
+            let t = Affine3A::from_scale(Vec3::ONE * WIDTH);
+            let size = o
+                .config
+                .backend
+                .frame_meta()
+                .and_then(|m| {
+                    let q = t * m.transform;
+                    (m.extent[0] > 0 && m.extent[1] > 0).then(|| {
+                        let a = m.extent[0] as f32 / m.extent[1] as f32;
+                        if a < 1.0 {
+                            let major = q.matrix3.col(0).length();
+                            (major * a, major)
+                        } else {
+                            let major = q.matrix3.col(1).length();
+                            (major, major / a)
+                        }
+                    })
+                })
+                .unwrap_or((WIDTH, WIDTH * 9.0 / 16.0));
+            let slot = crate::overlays::screen_numbers::slot_number(&o.config.name).and_then(Slot::from_number);
+            items.push((id, slot, VScreen { t, size }));
+        }
+        // one screen per slot; the first screen without one is the main screen when no other is
+        let mut taken: Vec<Slot> = Vec::new();
+        for it in &mut items {
+            if let Some(s) = it.1 {
+                if taken.contains(&s) {
+                    it.1 = None;
+                } else {
+                    taken.push(s);
+                }
+            }
+        }
+        if !taken.contains(&Slot::Main)
+            && let Some(it) = items.iter_mut().find(|i| i.1.is_none())
+        {
+            it.1 = Some(Slot::Main);
+        }
+        let slotted: Vec<(Slot, VScreen)> = items.iter().filter_map(|i| i.1.map(|s| (s, i.2))).collect();
+        let layout = viewlayout::default_layout(&hmd, &slotted, DISTANCE, viewlayout::MARGIN);
+        let main = layout.iter().find(|(s, _)| *s == Slot::Main).map(|x| x.1);
+        let mut screens: Vec<VScreen> = Vec::new();
+        let mut fixed: Vec<bool> = Vec::new();
+        for it in &items {
+            match it.1.and_then(|s| layout.iter().find(|(l, _)| *l == s)) {
+                Some((_, s)) => {
+                    screens.push(*s);
+                    fixed.push(true);
+                }
+                None => {
+                    // any other screen starts on main and is pushed beside the layout
+                    let base = main.unwrap_or_else(|| viewlayout::front(&hmd, WIDTH, it.2.size, DISTANCE));
+                    screens.push(VScreen { t: base.t, size: it.2.size });
+                    fixed.push(false);
+                }
+            }
+        }
+        viewlayout::resolve(&mut screens, &fixed, eye, viewlayout::MARGIN);
+        for (k, it) in items.iter().enumerate() {
+            let Some(o) = self.overlays.get_mut(it.0) else { continue };
+            let Some(state) = o.config.active_state.as_mut() else { continue };
+            log::info!("reset screens: {} -> default layout (screen {:?})", o.config.name, it.1.map(Slot::number));
             state.positioning = Positioning::Static;
-            state.transform = grabmath::default_front(&hmd, slot);
+            state.transform = screens[k].t;
             window::save_transform(state, app);
             o.config.dirty = true;
             o.config.out_of_view_s = 0.0;
-            slot += 1;
         }
     }
 

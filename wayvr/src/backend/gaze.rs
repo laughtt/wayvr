@@ -316,6 +316,103 @@ impl GazeState {
     }
 }
 
+/// The ONE gate for gaze input (omarchyvr, user decision 2026-10-17): "by default the gaze is only a visual point,
+/// never a mouse". Every path where the eyes could hover, click, focus, move the cursor or report a target for voice
+/// asks this gate, and the gate is `gaze_pointer` (omarchyvr writes it from eye.conf `gaze_mouse`, default off; the
+/// app switch "Eyes as a mouse"). Off: the gaze ray only places the visual dot (`gaze_laser`).
+pub mod gate {
+    use wlx_common::config::HandsfreePointer;
+
+    /// Gaze input is allowed (the eyes may act as a mouse).
+    pub const fn input_on(gaze_pointer: bool) -> bool {
+        gaze_pointer
+    }
+
+    /// The gaze may hover / click through a free controller slot this frame.
+    pub const fn may_point(gaze_pointer: bool, active: bool, picking_focus: bool, any_handsfree: bool) -> bool {
+        input_on(gaze_pointer) && active && !picking_focus && !any_handsfree
+    }
+
+    /// Gaze has priority over the controller rays (`gaze_over_controllers`), only while gaze input is on.
+    pub const fn over_controllers(gaze_pointer: bool, over: bool) -> bool {
+        input_on(gaze_pointer) && over
+    }
+
+    /// The dwell-click time actually used: 0 (never clicks) while gaze input is off.
+    pub const fn dwell_ms(gaze_pointer: bool, dwell_ms: u32) -> u32 {
+        if input_on(gaze_pointer) { dwell_ms } else { 0 }
+    }
+
+    /// `wayvrctl gaze` answers with targets (what voice "this" reads) only while gaze input is on.
+    pub const fn reporting(gaze_pointer: bool) -> bool {
+        input_on(gaze_pointer)
+    }
+
+    /// WayVR's own handsfree modes (dashboard, keyboard bar, `wayvrctl handsfree`) can make the eyes the pointer
+    /// (`EyeTracking`, `EyeTrackingOnly`): with gaze input off they fall back to the head pointer of the same kind.
+    pub const fn handsfree(mode: HandsfreePointer, gaze_pointer: bool) -> HandsfreePointer {
+        match mode {
+            HandsfreePointer::EyeTracking if !input_on(gaze_pointer) => HandsfreePointer::Hmd,
+            HandsfreePointer::EyeTrackingOnly if !input_on(gaze_pointer) => HandsfreePointer::HmdOnly,
+            m => m,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::backend::gaze::Dwell;
+        use crate::windowing::OverlayID;
+        use glam::Vec3A;
+        use std::time::{Duration, Instant};
+
+        /// With the switch off, no gaze input path can produce a pointer, click, focus or target event, whatever
+        /// else is configured (an old 20-gaze.yaml with dwell and gaze_over_controllers, a dashboard eye mode).
+        #[test]
+        fn switch_off_no_gaze_path_can_point_click_or_focus() {
+            for active in [false, true] {
+                for picking in [false, true] {
+                    for hf in [false, true] {
+                        assert!(!may_point(false, active, picking, hf));
+                    }
+                }
+            }
+            assert!(!over_controllers(false, true), "controllers keep hovering: a trigger never clicks where you look");
+            assert_eq!(dwell_ms(false, 600), 0);
+            assert!(!reporting(false), "wayvrctl gaze has no target for voice");
+            for m in [HandsfreePointer::EyeTracking, HandsfreePointer::EyeTrackingOnly] {
+                let e = handsfree(m, false);
+                assert!(!matches!(e, HandsfreePointer::EyeTracking | HandsfreePointer::EyeTrackingOnly), "{m:?} -> {e:?}");
+            }
+            // the dwell timer fed with the gated time never clicks, however long the eyes rest on one spot
+            let mut d = Dwell::default();
+            let t0 = Instant::now();
+            let hit = Some((OverlayID::default(), Vec3A::new(0.0, 0.0, -1.0)));
+            for ms in (0..20_000).step_by(11) {
+                assert!(!d.update(hit, t0 + Duration::from_millis(ms), dwell_ms(false, 600)));
+            }
+        }
+
+        #[test]
+        fn switch_on_is_the_only_way_in() {
+            assert!(may_point(true, true, false, false));
+            assert!(!may_point(true, false, false, false), "no valid gaze, no pointer");
+            assert!(over_controllers(true, true) && !over_controllers(true, false));
+            assert_eq!(dwell_ms(true, 600), 600);
+            assert!(reporting(true));
+            assert!(matches!(handsfree(HandsfreePointer::EyeTracking, true), HandsfreePointer::EyeTracking));
+            assert!(matches!(handsfree(HandsfreePointer::Hmd, false), HandsfreePointer::Hmd));
+        }
+
+        /// WayVR's own default is off too (an empty config).
+        #[test]
+        fn wayvr_default_config_has_no_gaze_input() {
+            let c: wlx_common::config::GeneralConfig = serde_json::from_str("{}").unwrap();
+            assert!(!input_on(c.gaze_pointer) && !c.gaze_over_controllers && c.gaze_dwell_ms == 0);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -135,6 +135,27 @@ pub fn note_desk_screens(screens: &[(Arc<str>, WlxDeskSlot, bool)], place: bool)
     rt.plan.note_screens(Instant::now(), shown, place);
 }
 
+/// The slot number (1 main .. 6 up-right) of a screen: from the last `desk-screens` call, else from the omarchyvr
+/// output name (`PIMAX-LEFT`, `PIMAX-RIGHT`, `PIMAX-UP`, `PIMAX-UPLEFT`, `PIMAX-UPRIGHT`). None: not a desk slot.
+pub fn slot_number(name: &str) -> Option<u8> {
+    if let Some(n) = RT.lock().ok().and_then(|rt| rt.plan.number_of_screen(name)) {
+        return Some(n);
+    }
+    slot_number_of_output(name)
+}
+
+/// The slot number an omarchyvr output name stands for (docs/SCREENS.md).
+pub fn slot_number_of_output(name: &str) -> Option<u8> {
+    match name {
+        "PIMAX-LEFT" => Some(2),
+        "PIMAX-RIGHT" => Some(3),
+        "PIMAX-UP" => Some(4),
+        "PIMAX-UPLEFT" => Some(5),
+        "PIMAX-UPRIGHT" => Some(6),
+        _ => None,
+    }
+}
+
 /// A screen was moved, resized or nudged: flash the badges and highlight it.
 pub fn note_screen_moved(name: &str) {
     let mut rt = RT.lock().unwrap();
