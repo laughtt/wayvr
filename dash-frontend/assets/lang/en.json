@@ -85,6 +85,7 @@
 				"ALT_CLICK": "Custom shell exec (set alt_click in config)",
 				"SHOW_HIDE": "Show, hide, recenter*",
 				"TOGGLE_DASHBOARD": "Toggle dashboard",
+				"MENU": "Open the Work menu",
 				"SPACE_DRAG": "Playspace drag",
 				"SPACE_ROTATE": "Playspace rotate",
 				"SPACE_RESET": "Playspace reset",

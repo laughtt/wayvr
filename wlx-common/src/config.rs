@@ -489,6 +489,13 @@ pub struct GeneralConfig {
 	#[serde(default)]
 	pub custom_panels: AStrSet,
 
+	/// Name of the overlay the `menu` binding (Oculus Touch: the left menu button) opens and closes, normally a
+	/// custom panel (list it in `custom_panels` too): `menu_panel: work_menu` in conf.d. That panel is global,
+	/// 0.45 m wide, pointable and not grabbable, and each time it is shown it appears about 0.6 m in front of the
+	/// head. Unset, or no overlay with this name: the `menu` binding toggles the dashboard instead. Not saved by the app.
+	#[serde(default)]
+	pub menu_panel: Option<Arc<str>>,
+
 	#[serde(default)]
 	pub capture_method: CaptureMethod,
 

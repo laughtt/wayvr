@@ -180,6 +180,15 @@
             <Screen idx="1" display="D2" name="DP-2"/>
           </div>
         </div>
+
+        <!-- Pimax: Exit Work. Always visible, in its own row: the longest side of the watch is a fixed 11.5 cm on the
+             wrist, so a wider bottom row would shrink everything. It is the way out in hands mode (camera hands have
+             no buttons); the left controller menu button opens the Work menu, which has the same button. A press runs
+             `omarchyvr desk exit`, which asks for a second press within a few seconds (the CLI keeps that state) and
+             then stops Work (screens, voice, AI). The directory of the omarchyvr binary is first on WayVR's PATH. -->
+        <Button id="btn_exit_work" macro="button_style" width="100%" text="Exit Work" text_size="24" text_weight="bold" text_color="on_danger"
+          color="danger" border_color="danger(rgb-mult-0.5)" hover_color="danger(rgb-add-0.2)" hover_border_color="danger"
+          _press="::ShellExec omarchyvr desk exit" tooltip_str="Exit Work: press twice to stop everything (screens, voice, AI)" tooltip_side="top" />
       </div>
     </div>
   </elements>

@@ -184,3 +184,99 @@ fn sets_or_overlays(panel: &mut GuiPanel<WatchState>, app: &mut AppState) {
             .set_widget_visible(widget[i], visible[i]);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, path::PathBuf, rc::Rc};
+
+    use wgui::{
+        assets::AssetPath,
+        components::{ComponentTrait, button::ComponentButton},
+        font_config::WguiFontConfig,
+        globals::WguiGlobals,
+        layout::{Layout, LayoutParams},
+        palette::WguiColorPalette,
+        parser::{
+            CustomAttribsInfoOwned, Fetchable, ParseDocumentExtra, ParseDocumentParams,
+            ParserState, new_layout_from_assets,
+        },
+    };
+    use wlx_common::locale::WayVRLangProvider;
+
+    use crate::gui::asset::GuiAsset;
+
+    /// Parses the built-in `gui/watch.xml` with the real wgui parser (CPU only, no Vulkan) and returns the layout (it
+    /// owns the components), the parser state and the custom (`_attr`) attributes of every element that has some, with
+    /// the id of the widget they belong to.
+    fn parse_watch() -> (Layout, ParserState, Vec<CustomAttribsInfoOwned>) {
+        let globals = WguiGlobals::new(
+            Box::new(GuiAsset {}),
+            &WayVRLangProvider::default(),
+            &WguiFontConfig::default(),
+            PathBuf::new(),
+            WguiColorPalette::get_builtin("Default"),
+        )
+        .expect("globals");
+
+        let custom: Rc<RefCell<Vec<CustomAttribsInfoOwned>>> = Rc::default();
+        let sink = custom.clone();
+        let extra = ParseDocumentExtra {
+            on_custom_attribs: Some(Rc::new(move |info| sink.borrow_mut().push(info.to_owned()))),
+            ..Default::default()
+        };
+
+        let (layout, state) = new_layout_from_assets(
+            &ParseDocumentParams {
+                globals,
+                path: AssetPath::BuiltIn("gui/watch.xml"),
+                extra,
+            },
+            LayoutParams::default(),
+        )
+        .expect("gui/watch.xml parses");
+
+        let custom = custom.take();
+        (layout, state, custom)
+    }
+
+    #[test]
+    fn exit_work_button_runs_omarchyvr_desk_exit() {
+        let (_layout, state, custom) = parse_watch();
+        let button = state
+            .fetch_component_as::<ComponentButton>("btn_exit_work")
+            .expect("the watch has a btn_exit_work button");
+        let id = button.base().get_id();
+        let attribs = custom
+            .iter()
+            .find(|a| a.widget_id == id)
+            .expect("btn_exit_work has custom attributes");
+        // `::ShellExec` joins the words after the command with single spaces and runs them as `sh -c`
+        assert_eq!(
+            attribs.get_value("_press"),
+            Some("::ShellExec omarchyvr desk exit")
+        );
+    }
+
+    #[test]
+    fn the_other_watch_elements_are_still_there() {
+        let (_layout, state, _) = parse_watch();
+        for id in [
+            "btn_dashboard",
+            "btn_keyboard",
+            "btn_edit_mode",
+            "btn_ai_mode",
+            "btn_ai_preset",
+        ] {
+            assert!(
+                state.fetch_component_by_id(id).is_ok(),
+                "watch.xml lost button {id}"
+            );
+        }
+        for id in ["sets_root", "panels_root", "clock_root", "devices_root"] {
+            assert!(
+                state.get_widget_id(id).is_ok(),
+                "watch.xml lost element {id}"
+            );
+        }
+    }
+}
