@@ -11,13 +11,18 @@ pub struct Limits {
     pub dist_max: f32,
 }
 
+/// Largest desk screen width / distance (metres) that desk-layout / desk-screens may set and that stay valid
+/// (huge cinema: ~11 m wide at ~8 m). Keep equal to the `grab_size_max` / `grab_dist_max` defaults in wlx-common.
+pub const DESK_MAX_WIDTH: f32 = 20.0;
+pub const DESK_MAX_DISTANCE: f32 = 20.0;
+
 impl Default for Limits {
     fn default() -> Self {
         Self {
             size_min: 0.3,
-            size_max: 6.0,
+            size_max: DESK_MAX_WIDTH,
             dist_min: 0.4,
-            dist_max: 8.0,
+            dist_max: DESK_MAX_DISTANCE,
         }
     }
 }
@@ -240,7 +245,7 @@ pub fn nudge(t: &Affine3A, size: (f32, f32), pivot: Vec3A, dir: NudgeDir, step: 
         }
         NudgeDir::Closer | NudgeDir::Farther => {
             let s = if dir == NudgeDir::Closer { -1.0 } else { 1.0 };
-            let nd = (d * (1.0 + s * step)).clamp(0.4, 8.0);
+            let nd = (d * (1.0 + s * step)).clamp(0.4, DESK_MAX_DISTANCE);
             let mut out = *t;
             out.translation = (pivot + (c - pivot) * (nd / d)).into();
             out
@@ -251,7 +256,7 @@ pub fn nudge(t: &Affine3A, size: (f32, f32), pivot: Vec3A, dir: NudgeDir, step: 
                 return *t;
             }
             let f = if dir == NudgeDir::Bigger { 1.0 + step } else { 1.0 / (1.0 + step) };
-            let k = (cur * f).clamp(0.3, 6.0) / cur;
+            let k = (cur * f).clamp(0.3, DESK_MAX_WIDTH) / cur;
             let mut out = *t;
             out.matrix3 = t.matrix3 * k;
             out
@@ -293,6 +298,14 @@ pub fn view_angle_deg(t: &Affine3A, hmd: &Affine3A) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn huge_cinema_screen_is_valid_with_default_limits() {
+        let lim = Limits::default();
+        let hmd = Affine3A::IDENTITY;
+        let t = Affine3A::from_scale_rotation_translation(Vec3::splat(11.0), Quat::IDENTITY, Vec3::new(0.0, 0.0, -8.0));
+        assert_eq!(invalid_reason(&t, &hmd, &lim), None);
+    }
+
     #[test]
     fn desk_arc_middle_left_right() {
         let hmd = Affine3A::IDENTITY;
@@ -345,9 +358,9 @@ mod tests {
         let m = desk_arc(&Affine3A::IDENTITY, 0, 1, 2.0, 0.45);
         let c = nudge(&m, (2.0, 1.0), Vec3A::ZERO, NudgeDir::Closer, 1.0);
         assert!((Vec3A::from(c.translation).length() - 0.4).abs() < 1e-3);
-        let m = desk_arc(&Affine3A::IDENTITY, 0, 1, 2.0, 7.9);
+        let m = desk_arc(&Affine3A::IDENTITY, 0, 1, 2.0, DESK_MAX_DISTANCE - 0.1);
         let f = nudge(&m, (2.0, 1.0), Vec3A::ZERO, NudgeDir::Farther, 1.0);
-        assert!((Vec3A::from(f.translation).length() - 8.0).abs() < 1e-3);
+        assert!((Vec3A::from(f.translation).length() - DESK_MAX_DISTANCE).abs() < 1e-3);
         // step is clamped to 0.02..1.0: a huge step equals 1.0
         let a = nudge(&m, (2.0, 1.0), Vec3A::ZERO, NudgeDir::Left, 50.0);
         let b = nudge(&m, (2.0, 1.0), Vec3A::ZERO, NudgeDir::Left, 1.0);
@@ -367,10 +380,10 @@ mod tests {
         // orientation kept
         let d = Vec3A::from(b.matrix3.z_axis).normalize().dot(Vec3A::from(m.matrix3.z_axis).normalize());
         assert!(d > 0.9999);
-        // clamped to 0.3..6
-        let big = desk_arc(&hmd, 0, 1, 5.9, 2.5);
-        let bb = nudge(&big, (5.9, 3.3), pivot, NudgeDir::Bigger, 1.0);
-        assert!((bb.matrix3.x_axis.length() - 6.0).abs() < 1e-4);
+        // clamped to 0.3..DESK_MAX_WIDTH
+        let big = desk_arc(&hmd, 0, 1, DESK_MAX_WIDTH - 0.1, 2.5);
+        let bb = nudge(&big, (DESK_MAX_WIDTH - 0.1, 3.3), pivot, NudgeDir::Bigger, 1.0);
+        assert!((bb.matrix3.x_axis.length() - DESK_MAX_WIDTH).abs() < 1e-4);
         let small = desk_arc(&hmd, 0, 1, 0.31, 2.5);
         let ss = nudge(&small, (0.31, 0.17), pivot, NudgeDir::Smaller, 1.0);
         assert!((ss.matrix3.x_axis.length() - 0.3).abs() < 1e-4);

@@ -302,13 +302,13 @@ const fn def_size_min() -> f32 {
 	0.3
 }
 const fn def_size_max() -> f32 {
-	6.0
+	20.0
 }
 const fn def_dist_min() -> f32 {
 	0.4
 }
 const fn def_dist_max() -> f32 {
-	8.0
+	20.0
 }
 
 const fn def_one() -> f32 {

@@ -61,8 +61,8 @@ fn desk_layout<O>(
     let n = if p.screens == 0 { ids.len() } else { (p.screens as usize).min(ids.len()) };
     let hmd = app.input_state.hmd;
     let curvature = p.curvature.clamp(0.0, 1.0);
-    let width = if p.width.is_finite() { p.width.clamp(0.3, 6.0) } else { 2.0 };
-    let distance = if p.distance.is_finite() { p.distance.clamp(0.4, 8.0) } else { 2.5 };
+    let width = if p.width.is_finite() { p.width.clamp(0.3, crate::windowing::grabmath::DESK_MAX_WIDTH) } else { 2.0 };
+    let distance = if p.distance.is_finite() { p.distance.clamp(0.4, crate::windowing::grabmath::DESK_MAX_DISTANCE) } else { 2.5 };
     log::info!("desk layout: {n} of {} screens, curvature {curvature}, width {width} m, distance {distance} m", ids.len());
     for (i, (_, id)) in ids.into_iter().enumerate() {
         if i >= n {
@@ -131,8 +131,8 @@ fn desk_screens<O>(
     let hmd = app.input_state.hmd;
     let pivot = Vec3A::from(hmd.translation);
     let curvature = if p.curvature.is_finite() { p.curvature.clamp(0.0, 1.0) } else { 0.0 };
-    let width = if p.width.is_finite() { p.width.clamp(0.3, 6.0) } else { 2.0 };
-    let distance = if p.distance.is_finite() { p.distance.clamp(0.4, 8.0) } else { 2.5 };
+    let width = if p.width.is_finite() { p.width.clamp(0.3, crate::windowing::grabmath::DESK_MAX_WIDTH) } else { 2.0 };
+    let distance = if p.distance.is_finite() { p.distance.clamp(0.4, crate::windowing::grabmath::DESK_MAX_DISTANCE) } else { 2.5 };
     let gap = if p.gap.is_finite() { p.gap.clamp(0.0, 1.0) } else { 0.05 };
 
     // names -> (id, slot, visible, was active before this call)
