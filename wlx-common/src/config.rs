@@ -510,7 +510,9 @@ pub struct GeneralConfig {
 	#[serde(default = "def_true")]
 	pub allow_sliding: bool,
 
-	#[serde(default)]
+	/// omarchyvr: ON by default. Pointing at a screen does not move the real desktop cursor; it moves on click,
+	/// trigger or grab (and while `move_mouse` is held). Off = every hover moves the cursor (upstream default).
+	#[serde(default = "def_true")]
 	pub focus_follows_mouse_mode: bool,
 
 	#[serde(default)]
@@ -738,4 +740,17 @@ pub struct GeneralConfig {
 
 	#[serde(default = "def_point15")]
 	pub default_curvature: f32,
+}
+
+#[cfg(test)]
+mod omarchyvr_tests {
+	use super::*;
+
+	#[test]
+	fn pointing_does_not_move_the_desktop_cursor_by_default() {
+		let c: GeneralConfig = serde_json5::from_str("{}").expect("empty config parses");
+		assert!(c.focus_follows_mouse_mode, "hover must not move the cursor unless the user asks");
+		let c: GeneralConfig = serde_json5::from_str("{focus_follows_mouse_mode: false}").unwrap();
+		assert!(!c.focus_follows_mouse_mode, "the app switch turns it back on");
+	}
 }
