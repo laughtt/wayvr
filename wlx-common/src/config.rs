@@ -470,6 +470,12 @@ pub struct GeneralConfig {
 	#[serde(default)]
 	pub world_lock_pin: bool,
 
+	/// With world_lock_grab: also send a screen back to the front after it was out of view (>80 degrees) for
+	/// 10 s at any time. Default off: a screen the user placed never moves because they looked away. Lost screens
+	/// (no saved pose, invalid pose) and the first 30 s after start-up are always handled.
+	#[serde(default)]
+	pub world_lock_out_of_view_reset: bool,
+
 	/// With world_lock_grab: while gripping, stick = push/pull (rate per second, e-fold); resize = two-hand grip.
 	#[serde(default = "def_grab_dist_rate")]
 	pub grab_dist_rate: f32,

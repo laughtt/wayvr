@@ -184,16 +184,20 @@ impl OverlayWindowConfig {
         };
         self.age_s += app.delta_time;
         if reason.is_none() {
-            // start-up: a pose saved in another session's world is often behind the user; don't make them wait 10 s
-            let limit = if self.age_s < 30.0 { 2.0 } else { 10.0 };
-            if grabmath::view_angle_deg(&state.transform, &hmd) > 80.0 {
-                self.out_of_view_s += app.delta_time;
-                if self.out_of_view_s > limit {
-                    reason = Some(if limit < 10.0 {
-                        "out of view for more than 2 s at start-up"
-                    } else {
-                        "out of view for more than 10 s"
-                    });
+            // start-up: a pose saved in another session's world is often behind the user; don't make them wait.
+            // After that a screen the user can place is never moved because they looked away (opt-in only).
+            if let Some(limit) = out_of_view_limit(self.age_s, cfg.world_lock_out_of_view_reset) {
+                if grabmath::view_angle_deg(&state.transform, &hmd) > 80.0 {
+                    self.out_of_view_s += app.delta_time;
+                    if self.out_of_view_s > limit {
+                        reason = Some(if limit < 10.0 {
+                            "out of view for more than 2 s at start-up"
+                        } else {
+                            "out of view for more than 10 s (world_lock_out_of_view_reset is on)"
+                        });
+                    }
+                } else {
+                    self.out_of_view_s = 0.0;
                 }
             } else {
                 self.out_of_view_s = 0.0;
@@ -419,4 +423,28 @@ pub fn spawn_transform_from_parent(
     let rotation = Quat::from_mat3a(&Mat3A::from_cols(x_axis, y_axis, z_axis));
 
     Affine3A::from_scale_rotation_translation(Vec3::ONE * child_scale, rotation, translation.into())
+}
+
+/// Seconds a world-locked screen may stay out of view before it is reset: 2 s in the first 30 s after start-up,
+/// 10 s later only when `world_lock_out_of_view_reset` is on, otherwise never.
+fn out_of_view_limit(age_s: f32, opt_in: bool) -> Option<f32> {
+    if age_s < 30.0 {
+        Some(2.0)
+    } else if opt_in {
+        Some(10.0)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod out_of_view_tests {
+    use super::out_of_view_limit;
+
+    #[test]
+    fn startup_always_later_only_opt_in() {
+        assert_eq!(out_of_view_limit(5.0, false), Some(2.0));
+        assert_eq!(out_of_view_limit(100.0, false), None);
+        assert_eq!(out_of_view_limit(100.0, true), Some(10.0));
+    }
 }
