@@ -85,6 +85,7 @@
 				"ALT_CLICK": "Ejecutable de shell personalizado (configura alt_click en el archivo de config)",
 				"SHOW_HIDE": "Mostrar, ocultar, recentrar*",
 				"TOGGLE_DASHBOARD": "Alternar tablero",
+				"MENU": "Abrir el menú de Work",
 				"SPACE_DRAG": "Arrastre del espacio de juego",
 				"SPACE_ROTATE": "Rotar espacio de juego",
 				"SPACE_RESET": "Restablecer espacio de juego",

@@ -128,6 +128,10 @@ pub enum OverlayTask {
     DeleteActiveSet,
     ToggleEditMode,
     ToggleDashboard,
+    /// The `menu` binding: show / hide the overlay named by `menu_panel` (the dashboard without one).
+    /// Only the OpenXR backend has the binding.
+    #[cfg_attr(not(feature = "openxr"), allow(dead_code))]
+    ToggleMenu,
     ShowHide,
     ResetScreens,
     CleanupOverlays(OverlayCategory),

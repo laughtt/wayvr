@@ -21,7 +21,7 @@ use crate::{
     config::save_state,
     overlays::{
         anchor::{create_alltab_help, create_anchor, create_grab_help},
-        custom::create_custom,
+        custom::{create_custom, menu_overlay},
         dashboard::{DASH_NAME, create_dash_frontend},
         edit::EditWrapperManager,
         keyboard::create_keyboard,
@@ -281,6 +281,24 @@ where
                         overlay.config.activate(app, true);
                     } else {
                         overlay.config.deactivate();
+                    }
+                    self.visible_overlays_changed(app)?;
+                }
+            }
+            OverlayTask::ToggleMenu => {
+                // Work menu: the overlay named by `menu_panel`; without one (or when it does not exist) the dashboard
+                let menu = menu_overlay(app.session.config.menu_panel.as_deref(), |name| {
+                    self.lookup(name)
+                });
+                let Some(id) = menu else {
+                    return self.handle_task(app, OverlayTask::ToggleDashboard);
+                };
+                if let Some(o) = self.mut_by_id(id) {
+                    if o.config.active_state.is_some() {
+                        o.config.deactivate();
+                    } else {
+                        // a fresh activation (hard reset): in front of the head, not where the menu was last
+                        o.config.activate(app, true);
                     }
                     self.visible_overlays_changed(app)?;
                 }

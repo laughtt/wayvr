@@ -65,6 +65,7 @@ APP_SETTINGS.BINDINGS.ACTION.GRAB,Grab*,Label for the grab action row in the bin
 APP_SETTINGS.BINDINGS.ACTION.ALT_CLICK,Custom shell exec (set alt_click in config),Label for the alt_click action row in the bindings editor. Triggers a custom shell command defined in config.
 APP_SETTINGS.BINDINGS.ACTION.SHOW_HIDE,"Show, hide, recenter*",Label for the show_hide action row. Toggles overlay visibility and recenters the set. Leave the '*' at the end.
 APP_SETTINGS.BINDINGS.ACTION.TOGGLE_DASHBOARD,Toggle dashboard,Label for the toggle_dashboard action row. Opens or closes the WayVR dashboard.
+APP_SETTINGS.BINDINGS.ACTION.MENU,Open the Work menu,"Label for the menu action row. Opens or closes the Work menu (the overlay named by the menu_panel setting; the dashboard if none is set). Work is the name of the desk mode, do not translate it."
 APP_SETTINGS.BINDINGS.ACTION.SPACE_DRAG,Playspace drag,"Label for the space_drag action row. Allows dragging the entire playspace/set of overlays. ""Playspace"" was previously translated as ""${DEFINITIONS.PLAYSPACE}""."
 APP_SETTINGS.BINDINGS.ACTION.SPACE_ROTATE,Playspace rotate,"Label for the space_rotate action row. Allows rotating the entire playspace/set. ""Playspace"" was previously translated as ""${DEFINITIONS.PLAYSPACE}""."
 APP_SETTINGS.BINDINGS.ACTION.SPACE_RESET,Playspace reset,"Label for the space_reset action row. Resets playspace to the original state. ""Playspace"" was previously translated as ""${DEFINITIONS.PLAYSPACE}""."

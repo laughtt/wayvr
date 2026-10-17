@@ -349,6 +349,17 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
                 .enqueue(TaskType::Overlay(OverlayTask::ToggleDashboard));
         }
 
+        // Work menu: the `menu` binding (Touch: left menu button) opens / closes the `menu_panel` overlay
+        if app
+            .input_state
+            .pointers
+            .iter()
+            .any(|p| p.now.menu && !p.before.menu)
+        {
+            app.tasks
+                .enqueue(TaskType::Overlay(OverlayTask::ToggleMenu));
+        }
+
         playspace_mover.update(&mut overlays, &mut app);
 
         for o in overlays.values_mut() {

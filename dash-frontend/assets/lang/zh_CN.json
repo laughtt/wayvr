@@ -85,6 +85,7 @@
 				"ALT_CLICK": "自定义 Shell 执行 (在配置中设置 alt_click)",
 				"SHOW_HIDE": "显示、隐藏、居中*",
 				"TOGGLE_DASHBOARD": "切换控制面板",
+				"MENU": "打开 Work 菜单",
 				"SPACE_DRAG": "活动空间拖拽",
 				"SPACE_ROTATE": "旋转活动空间",
 				"SPACE_RESET": "重置活动空间",

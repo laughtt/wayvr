@@ -85,6 +85,7 @@
 				"ALT_CLICK": "カスタムシェル実行 (configでalt_clickを設定)",
 				"SHOW_HIDE": "表示・非表示・再中心化*",
 				"TOGGLE_DASHBOARD": "ダッシュボードの切り替え",
+				"MENU": "Workメニューを開く",
 				"SPACE_DRAG": "プレイスペースのドラッグ",
 				"SPACE_ROTATE": "プレイスペース回転",
 				"SPACE_RESET": "プレイスペースのリセット",

@@ -262,6 +262,7 @@ pub(super) struct OpenXrHandSource {
     alt_click: CustomClickAction,
     show_hide: CustomClickAction,
     toggle_dashboard: CustomClickAction,
+    menu: CustomClickAction,
     space_drag: CustomClickAction,
     space_rotate: CustomClickAction,
     space_reset: CustomClickAction,
@@ -781,6 +782,8 @@ impl OpenXrPointer {
             .toggle_dashboard
             .state(pointer.before.toggle_dashboard, xr)?;
 
+        pointer.now.menu = self.source.menu.state(pointer.before.menu, xr)?;
+
         pointer.now.click_modifier_middle = self
             .source
             .modifier_middle
@@ -844,6 +847,7 @@ impl OpenXrHandSource {
             alt_click: CustomClickAction::new(action_set, "alt_click", side)?,
             show_hide: CustomClickAction::new(action_set, "show_hide", side)?,
             toggle_dashboard: CustomClickAction::new(action_set, "toggle_dashboard", side)?,
+            menu: CustomClickAction::new(action_set, "menu", side)?,
             space_drag: CustomClickAction::new(action_set, "space_drag", side)?,
             space_rotate: CustomClickAction::new(action_set, "space_rotate", side)?,
             space_reset: CustomClickAction::new(action_set, "space_reset", side)?,
@@ -1030,6 +1034,8 @@ fn suggest_bindings(
                 instance
             );
 
+            add_custom!(profile.menu, menu, hands, bindings, instance);
+
             add_custom!(profile.space_drag, space_drag, hands, bindings, instance);
 
             add_custom!(
@@ -1086,6 +1092,7 @@ fn suggest_bindings(
         set_threshold_for!(hands, profile.grab, grab);
         set_threshold_for!(hands, profile.show_hide, show_hide);
         set_threshold_for!(hands, profile.toggle_dashboard, toggle_dashboard);
+        set_threshold_for!(hands, profile.menu, menu);
         set_threshold_for!(hands, profile.space_drag, space_drag);
         set_threshold_for!(hands, profile.space_rotate, space_rotate);
         set_threshold_for!(hands, profile.space_reset, space_reset);

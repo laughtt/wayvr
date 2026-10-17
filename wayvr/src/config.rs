@@ -322,3 +322,40 @@ pub fn none_if_0(val: f32) -> Option<f32> {
         Some(val)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use config::{Config, File, FileFormat};
+    use wlx_common::config::GeneralConfig;
+
+    /// Reads a conf.d YAML the way `load_config_with_conf_d` does (the `config` crate, then `GeneralConfig`).
+    fn parse(yaml: &str) -> GeneralConfig {
+        Config::builder()
+            .add_source(File::from_str(yaml, FileFormat::Yaml))
+            .build()
+            .expect("the YAML builds")
+            .try_deserialize::<GeneralConfig>()
+            .expect("GeneralConfig deserializes")
+    }
+
+    #[test]
+    fn menu_panel_is_unset_by_default() {
+        assert_eq!(parse("enable_watch: true\n").menu_panel, None);
+        assert_eq!(parse("{}").menu_panel, None);
+    }
+
+    #[test]
+    fn menu_panel_reads_from_conf_d_yaml() {
+        let c = parse("custom_panels:\n  - work_menu\nmenu_panel: work_menu\n");
+        assert_eq!(c.menu_panel.as_deref(), Some("work_menu"));
+        assert!(c.custom_panels.iter().any(|p| &**p == "work_menu"));
+    }
+
+    #[test]
+    fn menu_panel_accepts_any_overlay_name() {
+        assert_eq!(
+            parse("menu_panel: Dashboard\n").menu_panel.as_deref(),
+            Some("Dashboard")
+        );
+    }
+}

@@ -85,6 +85,7 @@
 				"ALT_CLICK": "Exec shell personalizzato (imposta alt_click nel config)",
 				"SHOW_HIDE": "Mostra, nascondi, ricentra*",
 				"TOGGLE_DASHBOARD": "Attiva/disattiva dashboard",
+				"MENU": "Apri il menu Work",
 				"SPACE_DRAG": "Trascinamento Playspace",
 				"SPACE_ROTATE": "Rotazione Playspace",
 				"SPACE_RESET": "Reset playspace",
