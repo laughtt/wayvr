@@ -259,6 +259,22 @@
 ## Shortest fixation (ms) that counts as "looked at" for `wayvrctl gaze`
 #gaze_fixation_ms: 200
 
+## Gaze click v2. Learn a gaze correction from clicks (refined gaze clicks, controller laser clicks on screens,
+## `wayvrctl gaze-check`). It only bends the gaze direction; it never clicks. Status: `wayvrctl gaze-learn status`.
+#gaze_learn: false
+
+## Hold-to-refine gaze click: a trigger not aimed at an overlay freezes the gaze dot, the head nudges it, a tap
+## clicks at once, a release clicks at the refined spot, a 0.5 s still hold presses and drags.
+## Only effective while gaze_pointer is on too.
+#gaze_refine: false
+
+## Calibration fingerprint of the learned correction; lessons stored under another key are discarded.
+#gaze_learn_key: ""
+
+## Steady clicks: while a click is held, pointer jitter within this many overlay pixels reports the press point.
+## 0 = off.
+#click_steady_px: 32.0
+
 ## OpenXR only. Draw simple semi-transparent hand skeletons (needs XR_EXT_hand_tracking).
 ## Hidden while the runtime reports the hand as untracked. Does nothing without hand tracking.
 #show_hands: true

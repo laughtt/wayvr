@@ -1,5 +1,6 @@
 pub mod controller_model;
 pub mod gaze;
+pub mod gaze_lessons;
 pub mod gaze_target;
 pub mod hand_pointer;
 pub mod input;

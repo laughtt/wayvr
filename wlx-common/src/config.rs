@@ -339,6 +339,10 @@ const fn def_gaze_deadzone() -> f32 {
 	0.6
 }
 
+const fn def_click_steady_px() -> f32 {
+	32.0
+}
+
 const fn def_point15() -> f32 {
 	0.15
 }
@@ -710,6 +714,29 @@ pub struct GeneralConfig {
 	/// Shortest fixation (ms) that counts as "looked at" for `wayvrctl gaze` (`last_stable`, `history`).
 	#[serde(default = "def_gaze_fixation_ms")]
 	pub gaze_fixation_ms: u32,
+
+	/// Learn a gaze correction from clicks (gaze click v2): lessons from refined gaze clicks, from controller laser
+	/// clicks on screens and from `wayvrctl gaze-check` bend the gaze a little towards where you really look. The
+	/// learning only adjusts the gaze direction; it never produces a click or any other input (gate: `gaze_pointer`).
+	#[serde(default)]
+	pub gaze_learn: bool,
+
+	/// Hold-to-refine gaze click: a controller trigger that is not aimed at an overlay freezes the gaze dot, the
+	/// head then nudges it, a tap clicks at once, a release clicks at the refined spot and a 0.5 s still hold presses
+	/// and drags. Only effective while `gaze_pointer` is on too (`backend::gaze::gate::refine`).
+	#[serde(default)]
+	pub gaze_refine: bool,
+
+	/// Calibration fingerprint of the learned gaze correction. Stored lessons with a different key are discarded
+	/// (the old file is renamed to `.old`) and the learning starts empty.
+	#[serde(default)]
+	pub gaze_learn_key: String,
+
+	/// Steady clicks: while a click is held on an overlay and the pointer stays within this many overlay pixels of
+	/// the press point, the press point is reported (no jitter drags). Beyond it the real pointer is followed until
+	/// release. 0 = off.
+	#[serde(default = "def_click_steady_px")]
+	pub click_steady_px: f32,
 
 	#[serde(default = "def_one")]
 	pub grid_opacity: f32,
