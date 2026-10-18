@@ -181,6 +181,14 @@ pub async fn wlx_reset_screens(state: &mut WayVRClientState) {
     )
 }
 
+pub async fn wlx_desk_recenter(state: &mut WayVRClientState) {
+    handle_empty_result(
+        WayVRClient::fn_wlx_desk_recenter(state.wayvr_client.clone())
+            .await
+            .context("failed to recenter the desk layout"),
+    )
+}
+
 pub async fn wlx_recenter(state: &mut WayVRClientState) {
     handle_empty_result(
         WayVRClient::fn_wlx_recenter(state.wayvr_client.clone())

@@ -16,7 +16,7 @@ use wayvr_ipc::{
 
 use crate::helper::{
     WayVRClientState, wlr_input_capture, wlx_device_haptics, wlx_handsfree, wlx_input_state,
-    wlx_desk_layout, wlx_desk_screens, wlx_screen_nudge, wlx_screen_place, wlx_screen_numbers, wlx_gaze, wlx_gaze_laser, wlx_screens, wlx_prefer_hands, wlx_panel_modify, wlx_recenter, wlx_reset_screens, wlx_set_skybox, wlx_show_hide, wlx_switch_set, wvr_process_get, wvr_process_launch,
+    wlx_desk_layout, wlx_desk_recenter, wlx_desk_screens, wlx_screen_nudge, wlx_screen_place, wlx_screen_numbers, wlx_gaze, wlx_gaze_laser, wlx_screens, wlx_prefer_hands, wlx_panel_modify, wlx_recenter, wlx_reset_screens, wlx_set_skybox, wlx_show_hide, wlx_switch_set, wvr_process_get, wvr_process_launch,
     wvr_process_list, wvr_process_terminate, wvr_window_list, wvr_window_set_visible,
 };
 
@@ -173,6 +173,9 @@ async fn run_once(state: &mut WayVRClientState, args: Args) -> anyhow::Result<()
         }
         Subcommands::Recenter => {
             wlx_recenter(state).await;
+        }
+        Subcommands::DeskRecenter => {
+            wlx_desk_recenter(state).await;
         }
         Subcommands::DeskLayout {
             screens,
@@ -431,6 +434,8 @@ enum Subcommands {
     ResetScreens,
     /// Recenter the play space
     Recenter,
+    /// Locked desk layouts: the whole screen layout in front of you (yaw only, same shape); kept for the next start
+    DeskRecenter,
     /// Show the first N screens / app panels (0 = all) in an arc in front of the head, hide the rest
     DeskLayout {
         screens: u32,

@@ -8,6 +8,8 @@ pub enum WayVRSignal {
     ShowHide,
     ResetScreens,
     Recenter,
+    /// `WlxDeskRecenter`: the locked layout's anchor from the head now
+    DeskRecenter,
     DeskLayout(wayvr_ipc::packet_client::WlxDeskLayoutParams),
     SetSkybox(Option<String>),
     ScreenNudge(wayvr_ipc::packet_client::WlxScreenNudgeParams),

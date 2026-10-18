@@ -213,6 +213,10 @@ where
             }
             OverlayTask::ResetOverlay(sel) => {
                 if let Some(o) = self.mut_by_selector(&sel) {
+                    if crate::windowing::desklock::locked(app.session.config.desk_locked, o.config.category) {
+                        log::info!("reset overlay: '{}' refused: the desk screens are locked (desk_locked)", o.config.name);
+                        return Ok(());
+                    }
                     let was_active = o.config.is_active();
                     o.config.activate(app, true);
                     if !was_active {
@@ -844,6 +848,10 @@ impl<T> OverlayWindowManager<T> {
             // watch, anchor, toast, dashboard
             return;
         }
+        if enabled && crate::windowing::desklock::locked(app.session.config.desk_locked, overlay.config.category) {
+            // locked layouts: no edit-mode move or resize of a desk screen
+            return;
+        }
 
         if enabled {
             self.wrappers
@@ -1154,11 +1162,22 @@ impl<T> OverlayWindowManager<T> {
     /// Puts every active screen back in the default layout around the head (viewlayout::default_layout: main
     /// straight ahead 2.5 m away, 2 m wide; left, right, up, up-left, up-right around it by their badge number or
     /// `PIMAX-*` output name; any other screen beside them), world-locked (Static), none overlapping from the head.
+    /// Locked layouts (`desk_locked`): the same button / double-click B / `wayvrctl reset-screens` recenters the
+    /// layout instead (desklock: the anchor from the head, the layout's own shape and size).
     pub fn reset_screens(&mut self, app: &mut AppState) {
-        use crate::windowing::viewlayout::{self, Screen as VScreen, Slot};
-        const WIDTH: f32 = 2.0;
-        const DISTANCE: f32 = 2.5;
+        if app.session.config.desk_locked {
+            log::info!("reset screens: the desk screens are locked, recentering the layout instead");
+            app.wayvr_signals.send(crate::ipc::signal::WayVRSignal::DeskRecenter);
+            return;
+        }
         let hmd = app.input_state.hmd;
+        self.reset_screens_at(app, &hmd, 2.0, 2.5);
+    }
+
+    /// [`Self::reset_screens`] around `head` (yaw and position; level) with main `width` wide at `distance`.
+    pub fn reset_screens_at(&mut self, app: &mut AppState, head: &Affine3A, width: f32, distance: f32) {
+        use crate::windowing::viewlayout::{self, Screen as VScreen, Slot};
+        let hmd = *head;
         let eye = hmd.translation;
         let mut items: Vec<(OverlayID, Option<Slot>, VScreen)> = Vec::new();
         for (id, o) in self.overlays.iter_mut() {
@@ -1169,8 +1188,8 @@ impl<T> OverlayWindowManager<T> {
             {
                 continue;
             }
-            // the reset size: WIDTH wide (landscape) at the screen's own aspect
-            let t = Affine3A::from_scale(Vec3::ONE * WIDTH);
+            // the reset size: width wide (landscape) at the screen's own aspect
+            let t = Affine3A::from_scale(Vec3::ONE * width);
             let size = o
                 .config
                 .backend
@@ -1188,7 +1207,7 @@ impl<T> OverlayWindowManager<T> {
                         }
                     })
                 })
-                .unwrap_or((WIDTH, WIDTH * 9.0 / 16.0));
+                .unwrap_or((width, width * 9.0 / 16.0));
             let slot = crate::overlays::screen_numbers::slot_number(&o.config.name).and_then(Slot::from_number);
             items.push((id, slot, VScreen { t, size }));
         }
@@ -1209,7 +1228,7 @@ impl<T> OverlayWindowManager<T> {
             it.1 = Some(Slot::Main);
         }
         let slotted: Vec<(Slot, VScreen)> = items.iter().filter_map(|i| i.1.map(|s| (s, i.2))).collect();
-        let layout = viewlayout::default_layout(&hmd, &slotted, DISTANCE, viewlayout::MARGIN);
+        let layout = viewlayout::default_layout(&hmd, &slotted, distance, viewlayout::MARGIN);
         let main = layout.iter().find(|(s, _)| *s == Slot::Main).map(|x| x.1);
         let mut screens: Vec<VScreen> = Vec::new();
         let mut fixed: Vec<bool> = Vec::new();
@@ -1221,7 +1240,7 @@ impl<T> OverlayWindowManager<T> {
                 }
                 None => {
                     // any other screen starts on main and is pushed beside the layout
-                    let base = main.unwrap_or_else(|| viewlayout::front(&hmd, WIDTH, it.2.size, DISTANCE));
+                    let base = main.unwrap_or_else(|| viewlayout::front(&hmd, width, it.2.size, distance));
                     screens.push(VScreen { t: base.t, size: it.2.size });
                     fixed.push(false);
                 }

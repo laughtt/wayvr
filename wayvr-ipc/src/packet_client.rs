@@ -240,4 +240,7 @@ pub enum PacketClient {
 	WlxScreenPlace(WlxScreenPlaceParams),
 	/// Read only: desk screen poses and the head pose, answered with `WlxScreensResponse` (appended last)
 	WlxScreens(Serial),
+	/// Locked desk layouts: the layout anchor from the head now (yaw only), the whole layout placed again in front
+	/// of the user, same shape (appended last)
+	WlxDeskRecenter,
 }

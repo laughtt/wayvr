@@ -440,6 +440,9 @@ impl Connection {
             PacketClient::WlxResetScreens => {
                 params.signals.send(WayVRSignal::ResetScreens);
             }
+            PacketClient::WlxDeskRecenter => {
+                params.signals.send(WayVRSignal::DeskRecenter);
+            }
             PacketClient::WlxRecenter => {
                 params.signals.send(WayVRSignal::Recenter);
             }

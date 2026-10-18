@@ -154,6 +154,12 @@ impl OverlayWindowConfig {
     /// or out of view for 10 s with no grab) goes back to the default position in front of the head.
     fn auto_recover(&mut self, app: &mut AppState) {
         use crate::windowing::grabmath;
+        // locked layouts: a desk screen never moves by itself, not even at start-up (2026-10-18: the start-up
+        // "out of view for more than 2 s" reset put the left, up-left and right screens in front of the head)
+        if crate::windowing::desklock::locked(app.session.config.desk_locked, self.category) {
+            self.out_of_view_s = 0.0;
+            return;
+        }
         if self.pause_movement
             || self.editing
             || !matches!(

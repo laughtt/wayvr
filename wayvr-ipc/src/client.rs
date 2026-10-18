@@ -421,6 +421,11 @@ impl WayVRClient {
 		Ok(())
 	}
 
+	pub async fn fn_wlx_desk_recenter(client: WayVRClientMutex) -> anyhow::Result<()> {
+		send_only!(client, &PacketClient::WlxDeskRecenter);
+		Ok(())
+	}
+
 	pub async fn fn_wlx_recenter(client: WayVRClientMutex) -> anyhow::Result<()> {
 		send_only!(client, &PacketClient::WlxRecenter);
 		Ok(())
