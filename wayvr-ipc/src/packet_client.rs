@@ -238,4 +238,6 @@ pub enum PacketClient {
 	WlxScreenNumbers(WlxScreenNumbersParams),
 	/// Place a screen relative to another as seen from the head now; the others make room (appended last)
 	WlxScreenPlace(WlxScreenPlaceParams),
+	/// Read only: desk screen poses and the head pose, answered with `WlxScreensResponse` (appended last)
+	WlxScreens(Serial),
 }

@@ -570,6 +570,7 @@ where
 {
     desk_housekeeping(app, _overlays);
     crate::overlays::screen_numbers::tick(app, _overlays);
+    crate::overlays::screens_query::tick(app, _overlays);
 
     while let Some(signal) = app.wayvr_signals.read() {
         match signal {

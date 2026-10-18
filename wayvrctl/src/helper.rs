@@ -317,6 +317,31 @@ pub async fn wlx_gaze(state: &mut WayVRClientState) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `wayvrctl screens [--json]`: read-only desk screen poses and the head pose.
+pub async fn wlx_screens(state: &mut WayVRClientState, json: bool) -> anyhow::Result<()> {
+    let r = WayVRClient::fn_wlx_screens(state.wayvr_client.clone(), state.serial_generator.increment_get())
+        .await
+        .context("failed to get the screens (an older WayVR drops the connection)")?;
+    if json {
+        let s = if state.pretty_print { serde_json::to_string_pretty(&r) } else { serde_json::to_string(&r) }?;
+        println!("{s}");
+        return Ok(());
+    }
+    println!(
+        "head: pos [{:.2} {:.2} {:.2}] yaw {:.1} pitch {:.1}{}",
+        r.head.pos[0], r.head.pos[1], r.head.pos[2], r.head.yaw_deg, r.head.pitch_deg,
+        if r.head_valid { "" } else { " (no head pose yet)" }
+    );
+    for s in &r.screens {
+        println!(
+            "screen {} {} {}: pos [{:.2} {:.2} {:.2}] {:.2} m away, bearing {:+.1}, elevation {:+.1}, width {:.2} m, curvature {:.2}",
+            s.n, s.output, if s.shown { "shown" } else { "hidden" }, s.pos[0], s.pos[1], s.pos[2],
+            s.distance_m, s.bearing_deg, s.elevation_deg, s.width_m, s.curvature
+        );
+    }
+    Ok(())
+}
+
 pub async fn wlx_prefer_hands(state: &mut WayVRClientState, on: Option<bool>) {
     handle_empty_result(
         WayVRClient::fn_wlx_prefer_hands(state.wayvr_client.clone(), on)

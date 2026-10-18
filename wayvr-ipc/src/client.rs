@@ -475,6 +475,18 @@ impl WayVRClient {
 		))
 	}
 
+	pub async fn fn_wlx_screens(
+		client: WayVRClientMutex,
+		serial: Serial,
+	) -> anyhow::Result<packet_server::WlxScreens> {
+		Ok(send_and_wait!(
+			client,
+			serial,
+			&PacketClient::WlxScreens(serial),
+			WlxScreensResponse
+		))
+	}
+
 	pub async fn fn_wlx_gaze_laser(client: WayVRClientMutex, on: Option<bool>) -> anyhow::Result<()> {
 		send_only!(client, &PacketClient::WlxGazeLaser(on));
 		Ok(())

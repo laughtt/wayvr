@@ -156,6 +156,11 @@ pub fn slot_number_of_output(name: &str) -> Option<u8> {
     }
 }
 
+/// The screens the last `desk-screens` call showed: (overlay name, slot number), sorted by number.
+pub fn shown_screens() -> Vec<(Arc<str>, u8)> {
+    RT.lock().unwrap().plan.shown.clone()
+}
+
 /// A screen was moved, resized or nudged: flash the badges and highlight it.
 pub fn note_screen_moved(name: &str) {
     let mut rt = RT.lock().unwrap();

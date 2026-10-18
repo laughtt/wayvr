@@ -470,6 +470,13 @@ impl Connection {
                     &ipc::data_encode(&PacketServer::WlxGazeResponse(serial, report)),
                 )?;
             }
+            PacketClient::WlxScreens(serial) => {
+                let report = crate::overlays::screens_query::report();
+                send_packet(
+                    &mut self.conn,
+                    &ipc::data_encode(&PacketServer::WlxScreensResponse(serial, report)),
+                )?;
+            }
             PacketClient::WlxGazeLaser(on) => {
                 params.signals.send(WayVRSignal::GazeLaser(on));
             }
