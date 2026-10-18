@@ -134,6 +134,35 @@ pub struct WlxGaze {
 	pub history: Vec<WlxGazeFixation>,
 }
 
+/// Answer to `WlxGazeLearn`: the learned gaze correction (gaze click v2).
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct WlxGazeLearn {
+	/// `gaze_learn` is on
+	pub enabled: bool,
+	/// Lessons kept (at most 150)
+	pub lessons: u32,
+	/// Lessons taken / refused since the file was created
+	pub taken: u32,
+	pub refused: u32,
+	/// Error of the corrected gaze at the newest lesson, before it was learned, degrees
+	pub last_error_deg: Option<f32>,
+	/// The offset term of the fitted correction: yaw (+ left), pitch (+ up), degrees
+	pub offset_deg: [f32; 2],
+	/// Calibration fingerprint (`gaze_learn_key`)
+	pub key: String,
+}
+
+/// Answer to `WlxGazeCheck`.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct WlxGazeCheck {
+	pub ok: bool,
+	/// Error of the corrected gaze at the target before / after the lesson, degrees (ok only)
+	pub error_before_deg: Option<f32>,
+	pub error_after_deg: Option<f32>,
+	/// "no gaze", "not steady", "timed out" or "learning off" (not ok only)
+	pub reason: Option<String>,
+}
+
 // "Wvr" prefixes are WayVR-specific
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +177,8 @@ pub enum PacketServer {
 	WvrStateChanged(WvrStateChanged),
 	/// Appended last: no protocol bump needed
 	WlxGazeResponse(Serial, WlxGaze),
+	WlxGazeLearnResponse(Serial, WlxGazeLearn),
+	WlxGazeCheckResponse(Serial, WlxGazeCheck),
 }
 
 impl PacketServer {
@@ -162,6 +193,8 @@ impl PacketServer {
 			PacketServer::WvrProcessListResponse(serial, _) => Some(serial),
 			PacketServer::WvrStateChanged(_) => None,
 			PacketServer::WlxGazeResponse(serial, _) => Some(serial),
+			PacketServer::WlxGazeLearnResponse(serial, _) => Some(serial),
+			PacketServer::WlxGazeCheckResponse(serial, _) => Some(serial),
 		}
 	}
 }

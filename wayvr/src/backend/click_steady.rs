@@ -25,7 +25,7 @@ pub struct Steady {
 }
 
 impl Steady {
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.phase = Phase::Idle;
     }
 
@@ -121,16 +121,16 @@ mod tests {
 
     #[test]
     fn a_different_overlay_releases_it() {
-        let mut s = Steady::default();
+        let mut steady = Steady::default();
         let mut map = slotmap::SlotMap::<OverlayID, ()>::with_key();
-        let a = map.insert(());
-        let b = map.insert(());
-        let p = at(500.0, 300.0);
-        s.apply(true, true, a, p, PX, 32.0);
-        let q = at(502.0, 301.0);
-        assert_eq!(s.apply(false, true, b, q, PX, 32.0), q);
+        let first = map.insert(());
+        let second = map.insert(());
+        let press = at(500.0, 300.0);
+        steady.apply(true, true, first, press, PX, 32.0);
+        let near = at(502.0, 301.0);
+        assert_eq!(steady.apply(false, true, second, near, PX, 32.0), near);
         // and stays released even when back on the first overlay
-        assert_eq!(s.apply(false, true, a, q, PX, 32.0), q);
+        assert_eq!(steady.apply(false, true, first, near, PX, 32.0), near);
     }
 
     #[test]

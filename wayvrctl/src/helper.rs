@@ -317,6 +317,73 @@ pub async fn wlx_gaze(state: &mut WayVRClientState) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `wayvrctl gaze-learn status|forget`: the learned gaze correction. `--json` prints JSON, else one line.
+pub async fn wlx_gaze_learn(state: &mut WayVRClientState, forget: bool, json: bool) -> anyhow::Result<()> {
+    let g = WayVRClient::fn_wlx_gaze_learn(
+        state.wayvr_client.clone(),
+        state.serial_generator.increment_get(),
+        forget,
+    )
+    .await
+    .context("failed to get the gaze learning status (a WayVR without gaze click v2 drops the connection)")?;
+    if json {
+        let v = serde_json::json!({
+            "enabled": g.enabled,
+            "lessons": g.lessons,
+            "taken": g.taken,
+            "refused": g.refused,
+            "last_error_deg": g.last_error_deg,
+            "offset_deg": g.offset_deg,
+            "key": g.key,
+        });
+        println!("{}", if state.pretty_print { serde_json::to_string_pretty(&v)? } else { serde_json::to_string(&v)? });
+    } else {
+        println!(
+            "gaze learning {}: {} lessons ({} taken, {} refused), offset yaw {:.2} pitch {:.2} deg, key \"{}\"",
+            if g.enabled { "on" } else { "off" },
+            g.lessons,
+            g.taken,
+            g.refused,
+            g.offset_deg[0],
+            g.offset_deg[1],
+            g.key
+        );
+    }
+    Ok(())
+}
+
+/// `wayvrctl gaze-check`: waits up to ~8 s for a steady look at a target 1.5 m ahead. Exit code 0 even when the
+/// check itself fails (`ok: false` with a reason); 1 on an IPC error.
+pub async fn wlx_gaze_check(state: &mut WayVRClientState, json: bool) -> anyhow::Result<()> {
+    let g = WayVRClient::fn_wlx_gaze_check(
+        state.wayvr_client.clone(),
+        state.serial_generator.increment_get(),
+    )
+    .await
+    .context("failed to run the gaze check (a WayVR without gaze click v2 drops the connection)")?;
+    if json {
+        let v = if g.ok {
+            serde_json::json!({
+                "ok": true,
+                "error_before_deg": g.error_before_deg,
+                "error_after_deg": g.error_after_deg,
+            })
+        } else {
+            serde_json::json!({ "ok": false, "reason": g.reason })
+        };
+        println!("{}", if state.pretty_print { serde_json::to_string_pretty(&v)? } else { serde_json::to_string(&v)? });
+    } else if g.ok {
+        println!(
+            "gaze check ok: error {:.2} deg before, {:.2} deg after",
+            g.error_before_deg.unwrap_or(0.0),
+            g.error_after_deg.unwrap_or(0.0)
+        );
+    } else {
+        println!("gaze check failed: {}", g.reason.unwrap_or_default());
+    }
+    Ok(())
+}
+
 pub async fn wlx_prefer_hands(state: &mut WayVRClientState, on: Option<bool>) {
     handle_empty_result(
         WayVRClient::fn_wlx_prefer_hands(state.wayvr_client.clone(), on)

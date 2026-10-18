@@ -29,6 +29,8 @@ pub struct Connection {
     conn: local_socket::Stream,
     next_packet: Option<u32>,
     auth: Option<AuthInfo>,
+    /// A `wayvrctl gaze-check` waits for its answer: (serial, asked at)
+    pending_check: Option<(ipc::Serial, std::time::Instant)>,
 }
 
 pub fn send_packet(conn: &mut local_socket::Stream, data: &[u8]) -> anyhow::Result<()> {
@@ -109,6 +111,7 @@ impl Connection {
             alive: true,
             auth: None,
             next_packet: None,
+            pending_check: None,
         }
     }
 
@@ -470,6 +473,48 @@ impl Connection {
                     &ipc::data_encode(&PacketServer::WlxGazeResponse(serial, report)),
                 )?;
             }
+            PacketClient::WlxGazeLearn(serial, forget) => {
+                let g = &params.input_state.gaze;
+                if forget && let Ok(mut sh) = g.shared.lock() {
+                    sh.forget = true;
+                }
+                let st = g.learn_status();
+                // forgetting is done by the frame loop; answer with what it leaves
+                let st = if forget {
+                    crate::backend::gaze::LearnStatus {
+                        lessons: 0,
+                        taken: 0,
+                        refused: 0,
+                        last_error_deg: None,
+                        offset_deg: [0.0, 0.0],
+                        ..st
+                    }
+                } else {
+                    st
+                };
+                send_packet(
+                    &mut self.conn,
+                    &ipc::data_encode(&PacketServer::WlxGazeLearnResponse(
+                        serial,
+                        packet_server::WlxGazeLearn {
+                            enabled: st.enabled,
+                            lessons: st.lessons,
+                            taken: st.taken,
+                            refused: st.refused,
+                            last_error_deg: st.last_error_deg,
+                            offset_deg: st.offset_deg,
+                            key: st.key,
+                        },
+                    )),
+                )?;
+            }
+            PacketClient::WlxGazeCheck(serial) => {
+                if let Ok(mut sh) = params.input_state.gaze.shared.lock() {
+                    sh.check_request = true;
+                    sh.check_result = None;
+                }
+                self.pending_check = Some((serial, std::time::Instant::now()));
+            }
             PacketClient::WlxGazeLaser(on) => {
                 params.signals.send(WayVRSignal::GazeLaser(on));
             }
@@ -561,6 +606,41 @@ impl Connection {
                 }
             }
         }
+        self.deliver_gaze_check(params);
+    }
+
+    /// Answer a waiting `gaze-check` once the frame loop has a result (or when it never will).
+    fn deliver_gaze_check(&mut self, params: &TickParams) {
+        let Some((serial, asked)) = self.pending_check else {
+            return;
+        };
+        let result = params
+            .input_state
+            .gaze
+            .shared
+            .lock()
+            .ok()
+            .and_then(|mut sh| sh.check_result.take());
+        let answer = match result {
+            Some(a) => a,
+            None if asked.elapsed() > std::time::Duration::from_secs(12) => {
+                crate::backend::gaze::CheckAnswer::failed("timed out")
+            }
+            None => return,
+        };
+        self.pending_check = None;
+        let _ = send_packet(
+            &mut self.conn,
+            &ipc::data_encode(&PacketServer::WlxGazeCheckResponse(
+                serial,
+                packet_server::WlxGazeCheck {
+                    ok: answer.ok,
+                    error_before_deg: answer.error_before_deg,
+                    error_after_deg: answer.error_after_deg,
+                    reason: answer.reason,
+                },
+            )),
+        );
     }
 }
 

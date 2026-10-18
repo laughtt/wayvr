@@ -556,12 +556,12 @@ fn learn_from_lasers<O>(
         return;
     }
     let now = Instant::now();
-    for idx in 0..2 {
+    for (idx, h) in hits.iter().enumerate() {
         let p = &app.input_state.pointers[idx];
-        if !(p.now.click && !p.before.click) {
+        if !p.now.click || p.before.click {
             continue;
         }
-        let Some((hit, raw_hit)) = hits[idx].0 else {
+        let Some((hit, raw_hit)) = h.0 else {
             continue;
         };
         let on_screen = overlays

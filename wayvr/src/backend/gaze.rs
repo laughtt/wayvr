@@ -1074,6 +1074,7 @@ pub mod gate {
     /// Whether the gaze pointer's button is down this frame. The ONLY place a gaze click is decided: with
     /// `gaze_pointer` off it is `false` for every input; the learning (`gaze_learn`, laser lessons, `gaze-check`)
     /// has no input here at all.
+    #[allow(clippy::fn_params_excessive_bools)]
     pub const fn pointer_click(
         gaze_pointer: bool,
         gaze_refine: bool,
@@ -1102,7 +1103,8 @@ pub mod gate {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crate::backend::gaze::Dwell;
+        use crate::backend::gaze::{Dwell, GazeState};
+        use glam::{Affine3A, Quat, Vec3};
         use crate::windowing::OverlayID;
         use glam::Vec3A;
         use std::time::{Duration, Instant};
@@ -1155,8 +1157,6 @@ pub mod gate {
             assert!(!pointer_click(true, true, true, true, false), "refine: the trigger alone presses nothing");
             assert!(pointer_click(true, true, false, false, true));
 
-            use crate::backend::gaze::{GazeState, Shared};
-            use glam::{Affine3A, Quat, Vec3};
             let mut g = GazeState::new();
             let t0 = Instant::now();
             g.sync_config(true, "k", Affine3A::IDENTITY);
@@ -1175,8 +1175,6 @@ pub mod gate {
                 g.poll_shared(true, t0 + Duration::from_millis(11 * i));
                 assert!(!g.ptr.now.click && !g.ptr.before.click);
             }
-            assert!(g.ptr.now.click == false);
-            let _ = Shared::default();
             // with the switch off the refine logic is never driven: it stays idle
             assert!(!g.refine.active());
         }
@@ -1197,6 +1195,8 @@ pub mod gate {
         fn wayvr_default_config_has_no_gaze_input() {
             let c: wlx_common::config::GeneralConfig = serde_json::from_str("{}").unwrap();
             assert!(!input_on(c.gaze_pointer) && !c.gaze_over_controllers && c.gaze_dwell_ms == 0);
+            assert!(!c.gaze_learn && !c.gaze_refine && c.gaze_learn_key.is_empty());
+            assert!((c.click_steady_px - 32.0).abs() < f32::EPSILON);
         }
     }
 }
@@ -1467,7 +1467,7 @@ mod tests {
         let mut out = None;
         let mut ms = 0u64;
         while ms < 9000 && out.is_none() {
-            let w = if (ms / 50) % 2 == 0 { 2.0 } else { -2.0 };
+            let w = if (ms / 50).is_multiple_of(2) { 2.0 } else { -2.0 };
             out = c.step(t0 + Duration::from_millis(ms), Some(sample(t0 + Duration::from_millis(ms), (w, 0.0), Quat::IDENTITY, pos, Vec3::ZERO)));
             ms += 11;
         }

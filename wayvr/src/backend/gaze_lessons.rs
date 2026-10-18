@@ -92,8 +92,9 @@ fn solve(m: &[[f64; 6]; 6], b: &[f64; 6]) -> [f64; 6] {
         for r in 0..N {
             if r != c {
                 let f = a[r][c] / a[c][c];
-                for k in c..=N {
-                    a[r][k] -= f * a[c][k];
+                let pivot_row = a[c];
+                for (x, p) in a[r][c..].iter_mut().zip(&pivot_row[c..]) {
+                    *x -= f * p;
                 }
             }
         }
@@ -485,7 +486,7 @@ mod tests {
     #[test]
     fn empty_is_zero_and_solve_singular_is_zero() {
         assert_eq!(Correction::new().get(3.0, 4.0), (0.0, 0.0));
-        assert_eq!(solve(&[[0.0; 6]; 6], &[1.0; 6]), [0.0; 6]);
+        assert!(solve(&[[0.0; 6]; 6], &[1.0; 6]).iter().all(|v| *v == 0.0));
     }
 
     fn lesson(t: f64) -> Lesson {

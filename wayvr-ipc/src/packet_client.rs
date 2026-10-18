@@ -238,4 +238,10 @@ pub enum PacketClient {
 	WlxScreenNumbers(WlxScreenNumbersParams),
 	/// Place a screen relative to another as seen from the head now; the others make room (appended last)
 	WlxScreenPlace(WlxScreenPlaceParams),
+	/// Gaze click v2: status of the learned gaze correction, or (true) forget it first; answered with
+	/// `WlxGazeLearnResponse` (appended last)
+	WlxGazeLearn(Serial, bool),
+	/// Gaze click v2: place a target 1.5 m ahead and wait for a steady look at it; answered with
+	/// `WlxGazeCheckResponse` after at most ~8 s (appended last)
+	WlxGazeCheck(Serial),
 }

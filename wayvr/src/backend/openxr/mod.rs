@@ -152,6 +152,13 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
 
     // the subtle gaze laser (silent eye tracking)
     let gaze_laser_line = lines.allocate(&xr_state, &app)?;
+    // the `wayvrctl gaze-check` target: a small ring (four strokes)
+    let check_lines = [
+        lines.allocate(&xr_state, &app)?,
+        lines.allocate(&xr_state, &app)?,
+        lines.allocate(&xr_state, &app)?,
+        lines.allocate(&xr_state, &app)?,
+    ];
 
     let hands_visual = hands::HandsVisual::new(&xr_state, &mut lines, &app);
     // controller models (`show_controller_models`): a failure only logs, VR keeps running without them
@@ -418,6 +425,24 @@ pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
                 app.input_state.hmd,
                 width,
             );
+        }
+
+        if let Some(target) = app.input_state.gaze.check.target() {
+            // a world-fixed diamond facing the head
+            const R: f32 = 0.035;
+            let hmd = app.input_state.hmd;
+            let c = glam::Vec3A::from(target);
+            let (x, y) = (hmd.x_axis * R, hmd.y_axis * R);
+            let corners = [c + x, c + y, c - x, c - y];
+            for i in 0..4 {
+                lines.draw_between(
+                    check_lines[i],
+                    corners[i],
+                    corners[(i + 1) % 4],
+                    crate::backend::input::PointerMode::Special as usize + 1,
+                    hmd,
+                );
+            }
         }
 
         if let Some(hv) = hands_visual.as_ref() {
