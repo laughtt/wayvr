@@ -75,6 +75,8 @@ pub struct InputState {
     pub devices: Vec<TrackedDevice>,
     pub handsfree_state: PointerState,
     pub gaze: GazeState,
+    /// Steady clicks per pointer slot (`click_steady_px`).
+    steady: [crate::backend::click_steady::Steady; 2],
     pub picking_focus: FocusPickState,
     processes: Vec<Child>,
     disable_lerp_until: Instant,
@@ -90,6 +92,7 @@ impl InputState {
             processes: Vec::new(),
             handsfree_state: PointerState::default(),
             gaze: GazeState::new(),
+            steady: Default::default(),
             picking_focus: FocusPickState::None,
             disable_lerp_until: Instant::now(),
         }
@@ -520,10 +523,56 @@ where
         );
     }
 
+    learn_from_lasers(overlays, app, &hits);
     interact_gaze(overlays, app, lines, &hits);
     track_gaze_silent(overlays, app);
+    {
+        let cfg = &app.session.config;
+        let tracking = cfg.gaze_target || cfg.gaze_laser || cfg.gaze_pointer;
+        app.input_state.gaze.poll_shared(tracking, Instant::now());
+    }
 
     [hits[0].1, hits[1].1]
+}
+
+/// Passive gaze lessons: a controller laser that clicks down on a screen tells where the eyes should have been.
+/// Allowed even with `gaze_pointer` off because it only learns; it never sets a click or moves anything.
+fn learn_from_lasers<O>(
+    overlays: &mut OverlayWindowManager<O>,
+    app: &mut AppState,
+    hits: &[HandHit; 2],
+) where
+    O: Default,
+{
+    let input = &app.input_state;
+    if !input.gaze.learn || !input.gaze.active || !input.gaze.fresh {
+        return;
+    }
+    if input
+        .pointers
+        .iter()
+        .any(|p| p.interaction.grabbed.is_some() || p.now.grab || p.handsfree)
+    {
+        return;
+    }
+    let now = Instant::now();
+    for idx in 0..2 {
+        let p = &app.input_state.pointers[idx];
+        if !(p.now.click && !p.before.click) {
+            continue;
+        }
+        let Some((hit, raw_hit)) = hits[idx].0 else {
+            continue;
+        };
+        let on_screen = overlays
+            .mut_by_id(hit.overlay)
+            .is_some_and(|o| o.config.category == OverlayCategory::Screen);
+        if on_screen {
+            app.input_state
+                .gaze
+                .record_laser(raw_hit.global_pos.into(), now);
+        }
+    }
 }
 
 /// Silent gaze tracking: ray-cast the filtered gaze ray against the overlays WITHOUT hover, click or mouse
@@ -681,6 +730,7 @@ fn interact_gaze<O>(
     let Some(slot) = slot.filter(|_| usable) else {
         release_gaze(overlays, app);
         app.input_state.gaze.dwell.reset();
+        app.input_state.gaze.refine.reset();
         app.input_state.gaze.last_hit = None;
         return;
     };
@@ -692,20 +742,39 @@ fn interact_gaze<O>(
     // "look and click": a controller click that is not aimed at an overlay clicks where we look
     let input = &app.input_state;
     let trigger = (0..2).any(|i| input.pointers[i].now.click && hits[i].0.is_none());
-    let dwell_ms = crate::backend::gaze::gate::dwell_ms(app.session.config.gaze_pointer, input.gaze.dwell_ms);
+    let (gaze_pointer, gaze_refine) = (app.session.config.gaze_pointer, app.session.config.gaze_refine);
+    let dwell_ms = crate::backend::gaze::gate::dwell_ms(gaze_pointer, input.gaze.dwell_ms);
     let last_hit = input.gaze.last_hit;
-    let dwell = app
-        .input_state
-        .gaze
-        .dwell
-        .update(last_hit, Instant::now(), dwell_ms);
+    let now = Instant::now();
+
+    // hold-to-refine click (gate::refine): the trigger freezes the dot, the head refines it
+    let refine_out = if crate::backend::gaze::gate::refine(gaze_pointer, gaze_refine) {
+        let (_, hmd_rot, hmd_pos) = input.hmd.to_scale_rotation_translation();
+        let g = &mut app.input_state.gaze;
+        let (cur, look) = (g.current_dir(), g.look(now));
+        g.refine.update(trigger, now, hmd_rot, hmd_pos, cur, look)
+    } else {
+        app.input_state.gaze.refine.reset();
+        crate::backend::gaze::RefineOut::default()
+    };
+
+    let mut dwell = app.input_state.gaze.dwell.update(last_hit, now, dwell_ms);
+    if app.input_state.gaze.refine.active() {
+        dwell = false;
+        app.input_state.gaze.dwell.reset();
+    }
 
     let gaze = &mut app.input_state.gaze.ptr;
     gaze.before = gaze.now;
     gaze.now = PointerState::default();
-    gaze.now.click = trigger || dwell;
+    gaze.now.click =
+        crate::backend::gaze::gate::pointer_click(gaze_pointer, gaze_refine, trigger, dwell, refine_out.click);
     gaze.tracked = true;
     gaze.handsfree = false;
+    if let Some(d) = refine_out.dir {
+        let origin = glam::Vec3::from(gaze.pose.translation);
+        gaze.pose = Affine3A::from_rotation_translation(glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, d), origin);
+    }
     app.input_state.gaze.slot = Some(slot);
 
     swap_gaze(app, slot);
@@ -713,6 +782,11 @@ fn interact_gaze<O>(
     swap_gaze(app, slot);
 
     app.input_state.gaze.last_hit = hit.map(|(h, raw)| (h.overlay, raw.global_pos));
+    if let (Some(lesson), Some((_, raw_hit))) = (refine_out.lesson, hit) {
+        app.input_state
+            .gaze
+            .record_refine(&lesson, raw_hit.global_pos.into());
+    }
 
     if let Some((hit, raw_hit)) = hit {
         // small plus-shaped cursor facing the HMD
@@ -1015,6 +1089,12 @@ where
 
     let ray_origin = pointer.pose;
     let mode = pointer.interaction.mode;
+    let held = pointer.now.click || pointer.before.click;
+    let down_edge = pointer.now.click && !pointer.before.click;
+    let steady_px = app.session.config.click_steady_px;
+    if !held {
+        app.input_state.steady[pointer_idx].reset();
+    }
     let edit_mode = overlays.get_edit_mode();
 
     let mut hits: SmallVec<[RayHit; 8]> = smallvec!();
@@ -1053,6 +1133,21 @@ where
             continue;
         };
 
+        // steady click: a held click keeps reporting its press point while the real hit stays near it
+        let mut steady = app.input_state.steady[pointer_idx];
+        let uv = if held && steady_px > 0.0 {
+            let backend = overlay.config.backend.as_mut();
+            let px_per_uv = match (backend.uv_to_desktop(Vec2::ZERO), backend.uv_to_desktop(Vec2::ONE)) {
+                (Some(a), Some(b)) => (b - a).abs(),
+                _ => backend
+                    .frame_meta()
+                    .map_or(Vec2::ZERO, |m| Vec2::new(m.extent[0] as f32, m.extent[1] as f32)),
+            };
+            steady.apply(down_edge, held, hit.overlay, uv, px_per_uv, steady_px)
+        } else {
+            uv
+        };
+
         if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) && !overlay.config.resizing {
             continue;
         }
@@ -1067,6 +1162,7 @@ where
 
         let result = overlay.config.backend.on_hover(app, &pointer_hit);
         if result.consume || overlay.config.editing {
+            app.input_state.steady[pointer_idx] = steady;
             return (Some((pointer_hit, hit)), result.haptics);
         }
     }

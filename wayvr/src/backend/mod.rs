@@ -1,4 +1,5 @@
 pub mod controller_model;
+pub mod click_steady;
 pub mod gaze;
 pub mod gaze_lessons;
 pub mod gaze_target;

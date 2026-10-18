@@ -6,14 +6,32 @@
 //! from a controller trigger or a dwell timer.
 
 use std::{
+    collections::VecDeque,
     f32::consts::PI,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
-use glam::{Affine3A, Quat, Vec3, Vec3A};
+use glam::{Affine3A, DVec3, Quat, Vec3, Vec3A};
 
-use crate::{backend::input::Pointer, windowing::OverlayID};
+use crate::{
+    backend::{
+        gaze_lessons::{Lesson, LessonStore, unix_secs},
+        input::Pointer,
+    },
+    windowing::OverlayID,
+};
 
+/// Raw head-relative gaze samples are kept this long (gaze click v2).
+const HISTORY: Duration = Duration::from_millis(500);
+/// The "look" at a moment is the per-axis median of the raw samples in this window before it (Frametop LOOK).
+const LOOK: Duration = Duration::from_millis(300);
+/// A refine lesson further than this (degrees) past the current correction is refused.
+const REFINE_MAX_DEG: f64 = 20.0;
+/// A laser lesson is taken only if the corrected gaze was within this many degrees of the laser hit.
+const LASER_MAX_DEG: f64 = 4.0;
+/// A gaze-check lesson is refused past this many degrees.
+const CHECK_MAX_DEG: f64 = 15.0;
 /// Gaze is considered lost if no valid sample arrived for this long.
 pub const GAZE_STALE: Duration = Duration::from_millis(500);
 /// Raw gaze samples that are bit-identical this many frames in a row are treated as a frozen tracker.
@@ -148,6 +166,443 @@ impl Dwell {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Gaze click v2: angles, hold-to-refine click, gaze check
+
+/// Head-relative direction (-Z forward, +X right, +Y up) to (yaw degrees, + left; pitch degrees, + up).
+pub fn dir_to_angles(d: Vec3) -> (f64, f64) {
+    let d = DVec3::new(f64::from(d.x), f64::from(d.y), f64::from(d.z)).normalize_or_zero();
+    ((-d.x).atan2(-d.z).to_degrees(), d.y.clamp(-1.0, 1.0).asin().to_degrees())
+}
+
+/// The inverse of [`dir_to_angles`].
+pub fn angles_to_dir(yaw: f64, pitch: f64) -> Vec3 {
+    let (y, p) = (yaw.to_radians(), pitch.to_radians());
+    Vec3::new(
+        (-y.sin() * p.cos()) as f32,
+        p.sin() as f32,
+        (-y.cos() * p.cos()) as f32,
+    )
+}
+
+fn angle_deg(a: Vec3, b: Vec3) -> f32 {
+    a.normalize_or_zero()
+        .dot(b.normalize_or_zero())
+        .clamp(-1.0, 1.0)
+        .acos()
+        .to_degrees()
+}
+
+fn median(v: &mut [f64]) -> f64 {
+    v.sort_by(f64::total_cmp);
+    let n = v.len();
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        f64::midpoint(v[n / 2 - 1], v[n / 2])
+    }
+}
+
+/// The error of the head-relative angles `a` against `b`, degrees.
+fn angles_err(a: (f64, f64), b: (f64, f64)) -> f64 {
+    f64::from(angle_deg(angles_to_dir(a.0, a.1), angles_to_dir(b.0, b.1)))
+}
+
+/// Hold the trigger still for this long and the click turns into a real press (drag).
+const REFINE_PRESS_AFTER: Duration = Duration::from_millis(500);
+/// A release sooner than this, without head movement, is a tap: it clicks at the frozen spot.
+const REFINE_TAP: Duration = Duration::from_millis(250);
+/// The head counts as still when it moved less than this (degrees) over the last [`REFINE_PRESS_AFTER`].
+const REFINE_STILL_DEG: f32 = 0.5;
+/// The refined head pointer holds still inside this dead zone and then trails the head.
+const REFINE_DEADZONE_DEG: f32 = 0.5;
+/// The head moved the dot at least this much (degrees): the click is a refined one.
+const REFINE_MOVED_DEG: f32 = 0.2;
+/// A refined / tapped click is held down this long.
+const REFINE_CLICK: Duration = Duration::from_millis(60);
+
+/// What the refine state machine tells `interact_gaze` this frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct RefineOut {
+    /// Replace the gaze pointer direction (stage space) with this; `None` = the normal gaze.
+    pub dir: Option<Vec3>,
+    /// The gaze pointer's button is down.
+    pub click: bool,
+    /// A refined click starts this frame: record a lesson from where the click lands.
+    pub lesson: Option<RefineLesson>,
+}
+
+/// What a refine lesson needs from the moment the trigger went down.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RefineLesson {
+    /// Raw head-relative look (yaw, pitch degrees) at the press.
+    pub look: Option<(f64, f64)>,
+    pub hmd_rot0: Quat,
+    pub hmd_pos0: Vec3,
+}
+
+#[derive(Debug, Clone)]
+struct Hold {
+    t0: Instant,
+    anchor: Vec3,
+    rot0: Quat,
+    pos0: Vec3,
+    look: Option<(f64, f64)>,
+    moved: bool,
+    dir: Vec3,
+    rots: VecDeque<(Instant, Quat)>,
+    lesson_given: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+enum RState {
+    #[default]
+    Idle,
+    Hold(Box<Hold>),
+    Pressed(Box<Hold>),
+    Clicking {
+        until: Instant,
+        dir: Vec3,
+    },
+}
+
+/// Hold-to-refine gaze click (only used through `gate::refine`).
+///
+/// Trigger down freezes the gaze at the anchor and presses nothing. While held, the head moves the pointer (gain 1,
+/// with a small trailing dead zone). A tap clicks at the anchor, a release after head movement clicks at the refined
+/// spot, a 0.5 s still hold presses for real and the head then drags until release.
+#[derive(Debug, Default)]
+pub struct Refine {
+    state: RState,
+    prev_trigger: bool,
+}
+
+impl Refine {
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// The refine logic owns the pointer (frozen, refining, pressed or clicking).
+    pub const fn active(&self) -> bool {
+        !matches!(self.state, RState::Idle)
+    }
+
+    fn head_pointer(h: &mut Hold, rot: Quat) -> Vec3 {
+        let target = (rot * h.rot0.inverse()) * h.anchor;
+        if angle_deg(h.anchor, target) > REFINE_MOVED_DEG {
+            h.moved = true;
+        }
+        h.dir = apply_deadzone(h.dir, target, REFINE_DEADZONE_DEG);
+        h.dir
+    }
+
+    /// One frame. `cur_dir`: the corrected and filtered gaze direction (stage space) if usable; `look`: the raw
+    /// head-relative look now.
+    pub fn update(
+        &mut self,
+        trigger: bool,
+        now: Instant,
+        hmd_rot: Quat,
+        hmd_pos: Vec3,
+        cur_dir: Option<Vec3>,
+        look: Option<(f64, f64)>,
+    ) -> RefineOut {
+        let rising = trigger && !self.prev_trigger;
+        self.prev_trigger = trigger;
+        let state = std::mem::take(&mut self.state);
+        match state {
+            RState::Idle => {
+                if let (true, Some(anchor)) = (rising, cur_dir) {
+                    let h = Hold {
+                        t0: now,
+                        anchor,
+                        rot0: hmd_rot,
+                        pos0: hmd_pos,
+                        look,
+                        moved: false,
+                        dir: anchor,
+                        rots: VecDeque::from([(now, hmd_rot)]),
+                        lesson_given: false,
+                    };
+                    self.state = RState::Hold(Box::new(h));
+                    return RefineOut {
+                        dir: Some(anchor),
+                        ..RefineOut::default()
+                    };
+                }
+                RefineOut::default()
+            }
+            RState::Hold(mut h) => {
+                h.rots.push_back((now, hmd_rot));
+                while h
+                    .rots
+                    .front()
+                    .is_some_and(|(t, _)| now.duration_since(*t) > REFINE_PRESS_AFTER)
+                {
+                    h.rots.pop_front();
+                }
+                let dir = Self::head_pointer(&mut h, hmd_rot);
+                let lesson = |h: &Hold| RefineLesson {
+                    look: h.look,
+                    hmd_rot0: h.rot0,
+                    hmd_pos0: h.pos0,
+                };
+                if !trigger {
+                    // release before a press: tap = at the anchor, else the refined spot
+                    let tap = now.duration_since(h.t0) < REFINE_TAP && !h.moved;
+                    let at = if tap { h.anchor } else { dir };
+                    let out = RefineOut {
+                        dir: Some(at),
+                        click: true,
+                        lesson: (h.moved && !tap).then(|| lesson(&h)),
+                    };
+                    self.state = RState::Clicking {
+                        until: now + REFINE_CLICK,
+                        dir: at,
+                    };
+                    return out;
+                }
+                let held = now.duration_since(h.t0) >= REFINE_PRESS_AFTER;
+                let still = h.rots.front().is_some_and(|(t, _)| {
+                    now.duration_since(*t) + Duration::from_millis(60) >= REFINE_PRESS_AFTER
+                }) && h
+                    .rots
+                    .iter()
+                    .all(|(_, q)| q.angle_between(hmd_rot).to_degrees() < REFINE_STILL_DEG);
+                if held && still {
+                    let out = RefineOut {
+                        dir: Some(dir),
+                        click: true,
+                        lesson: (h.moved && !h.lesson_given).then(|| lesson(&h)),
+                    };
+                    h.lesson_given = true;
+                    self.state = RState::Pressed(h);
+                    return out;
+                }
+                self.state = RState::Hold(h);
+                RefineOut {
+                    dir: Some(dir),
+                    ..RefineOut::default()
+                }
+            }
+            RState::Pressed(mut h) => {
+                if !trigger {
+                    // released: the press ends this frame
+                    return RefineOut::default();
+                }
+                let dir = Self::head_pointer(&mut h, hmd_rot);
+                self.state = RState::Pressed(h);
+                RefineOut {
+                    dir: Some(dir),
+                    click: true,
+                    lesson: None,
+                }
+            }
+            RState::Clicking { until, dir } => {
+                if now < until {
+                    self.state = RState::Clicking { until, dir };
+                    RefineOut {
+                        dir: Some(dir),
+                        click: true,
+                        lesson: None,
+                    }
+                } else {
+                    RefineOut::default()
+                }
+            }
+        }
+    }
+}
+
+/// How long `wayvrctl gaze-check` waits for a steady look.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(8);
+/// The corrected gaze must come within this many degrees of the target before the settle time starts.
+const CHECK_NEAR_DEG: f32 = 6.0;
+/// Settle time after the first near sample.
+const CHECK_SETTLE: Duration = Duration::from_millis(450);
+/// The steady window and its largest raw spread.
+const CHECK_WINDOW: Duration = Duration::from_millis(600);
+const CHECK_SPREAD_DEG: f32 = 1.0;
+/// Distance of the check target straight ahead of the head.
+const CHECK_DIST: f32 = 1.5;
+
+/// One frame's gaze, as the check sees it.
+#[derive(Debug, Clone, Copy)]
+pub struct CheckSample {
+    pub t: Instant,
+    /// Raw head-relative angles (yaw, pitch degrees).
+    pub raw: (f64, f64),
+    /// Raw gaze direction, stage space.
+    pub raw_dir: Vec3,
+    /// Raw + learned correction, stage space.
+    pub corr_dir: Vec3,
+    pub hmd_rot: Quat,
+    pub hmd_pos: Vec3,
+}
+
+/// A finished check.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CheckOutcome {
+    /// `look`: median raw head-relative look; `truth`: median head-relative direction of the target.
+    Done {
+        look: (f64, f64),
+        truth: (f64, f64),
+    },
+    Failed(&'static str),
+}
+
+#[derive(Debug, Clone)]
+struct CheckRun {
+    target: Vec3,
+    started: Instant,
+    near_since: Option<Instant>,
+    window: Vec<CheckSample>,
+    saw_sample: bool,
+    settled_once: bool,
+}
+
+/// `wayvrctl gaze-check`: a world-fixed target 1.5 m ahead; a steady look at it becomes a lesson.
+#[derive(Debug, Default)]
+pub struct GazeCheck {
+    run: Option<CheckRun>,
+}
+
+impl GazeCheck {
+    pub const fn active(&self) -> bool {
+        self.run.is_some()
+    }
+
+    /// The world position of the target while a check runs.
+    pub fn target(&self) -> Option<Vec3> {
+        self.run.as_ref().map(|r| r.target)
+    }
+
+    pub fn cancel(&mut self) {
+        self.run = None;
+    }
+
+    /// Start a check: the target is `CHECK_DIST` straight ahead of the head now.
+    pub fn start(&mut self, now: Instant, hmd_rot: Quat, hmd_pos: Vec3) {
+        self.run = Some(CheckRun {
+            target: hmd_pos + hmd_rot * (Vec3::NEG_Z * CHECK_DIST),
+            started: now,
+            near_since: None,
+            window: Vec::new(),
+            saw_sample: false,
+            settled_once: false,
+        });
+    }
+
+    /// One frame; `sample` is `None` while the gaze is invalid (blinks). Returns the outcome once it is known.
+    pub fn step(&mut self, now: Instant, sample: Option<CheckSample>) -> Option<CheckOutcome> {
+        let run = self.run.as_mut()?;
+        if let Some(s) = sample {
+            run.saw_sample = true;
+            let to_target = run.target - s.hmd_pos;
+            if angle_deg(s.corr_dir, to_target) > CHECK_NEAR_DEG {
+                run.near_since = None;
+                run.window.clear();
+            } else {
+                let since = *run.near_since.get_or_insert(s.t);
+                if s.t.duration_since(since) >= CHECK_SETTLE {
+                    run.window.push(s);
+                    let first = run.window[0].t;
+                    if s.t.duration_since(first) >= CHECK_WINDOW {
+                        run.settled_once = true;
+                        let mean = run
+                            .window
+                            .iter()
+                            .fold(Vec3::ZERO, |a, w| a + w.raw_dir.normalize_or_zero())
+                            .normalize_or_zero();
+                        let spread = run
+                            .window
+                            .iter()
+                            .map(|w| angle_deg(w.raw_dir, mean))
+                            .fold(0.0, f32::max);
+                        if spread <= CHECK_SPREAD_DEG {
+                            let mut ly: Vec<f64> = run.window.iter().map(|w| w.raw.0).collect();
+                            let mut lp: Vec<f64> = run.window.iter().map(|w| w.raw.1).collect();
+                            let truths: Vec<(f64, f64)> = run
+                                .window
+                                .iter()
+                                .map(|w| {
+                                    dir_to_angles(w.hmd_rot.inverse() * (run.target - w.hmd_pos))
+                                })
+                                .collect();
+                            let mut ty: Vec<f64> = truths.iter().map(|t| t.0).collect();
+                            let mut tp: Vec<f64> = truths.iter().map(|t| t.1).collect();
+                            let out = CheckOutcome::Done {
+                                look: (median(&mut ly), median(&mut lp)),
+                                truth: (median(&mut ty), median(&mut tp)),
+                            };
+                            self.run = None;
+                            return Some(out);
+                        }
+                        // not steady: settle again
+                        run.near_since = Some(s.t);
+                        run.window.clear();
+                    }
+                }
+            }
+        }
+        if now.duration_since(run.started) > CHECK_TIMEOUT {
+            let why = if !run.saw_sample {
+                "no gaze"
+            } else if run.settled_once {
+                "not steady"
+            } else {
+                "timed out"
+            };
+            self.run = None;
+            return Some(CheckOutcome::Failed(why));
+        }
+        None
+    }
+}
+
+/// The answer to `wayvrctl gaze-check`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckAnswer {
+    pub ok: bool,
+    pub error_before_deg: Option<f32>,
+    pub error_after_deg: Option<f32>,
+    pub reason: Option<String>,
+}
+
+impl CheckAnswer {
+    pub fn failed(reason: &str) -> Self {
+        Self {
+            ok: false,
+            error_before_deg: None,
+            error_after_deg: None,
+            reason: Some(reason.to_string()),
+        }
+    }
+}
+
+/// Mailbox between the IPC server (another call site, `&InputState` only) and the frame loop.
+#[derive(Debug, Default)]
+pub struct Shared {
+    /// `wayvrctl gaze-check` asked for a check.
+    pub check_request: bool,
+    /// The finished check, taken by the waiting connection.
+    pub check_result: Option<CheckAnswer>,
+    /// `wayvrctl gaze-learn forget`.
+    pub forget: bool,
+}
+
+/// `wayvrctl gaze-learn status`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LearnStatus {
+    pub enabled: bool,
+    pub lessons: u32,
+    pub taken: u32,
+    pub refused: u32,
+    pub last_error_deg: Option<f32>,
+    pub offset_deg: [f32; 2],
+    pub key: String,
+}
+
 /// Counters for the periodic diagnostics line.
 #[derive(Debug, Default)]
 pub struct GazeStats {
@@ -191,6 +646,22 @@ pub struct GazeState {
     pub laser: Option<(Vec3A, Vec3A, f32)>,
     /// Fixations for `wayvrctl gaze`.
     pub target: crate::backend::gaze_target::GazeTarget,
+    /// HMD pose (stage space), set every frame before `feed`: gaze samples are made head-relative with it.
+    pub hmd: Affine3A,
+    /// Gaze click v2: apply and learn the correction (mirrors `gaze_learn`).
+    pub learn: bool,
+    /// The learned correction and its file.
+    pub store: LessonStore,
+    /// Hold-to-refine click state (only driven through `gate::refine`).
+    pub refine: Refine,
+    /// `wayvrctl gaze-check`.
+    pub check: GazeCheck,
+    /// Mailbox for the IPC server.
+    pub shared: Arc<Mutex<Shared>>,
+    /// Raw head-relative samples of the last [`HISTORY`]: (time, yaw, pitch).
+    history: VecDeque<(Instant, f64, f64)>,
+    /// This frame's sample for the check (cleared when the gaze is invalid).
+    sample: Option<CheckSample>,
 }
 
 impl GazeState {
@@ -215,6 +686,19 @@ impl GazeState {
             laser_on: false,
             laser: None,
             target: crate::backend::gaze_target::GazeTarget::default(),
+            hmd: Affine3A::IDENTITY,
+            learn: false,
+            // tests never touch the user's lessons file
+            store: if cfg!(test) {
+                LessonStore::in_memory()
+            } else {
+                LessonStore::load(crate::backend::gaze_lessons::default_path(), unix_secs())
+            },
+            refine: Refine::default(),
+            check: GazeCheck::default(),
+            shared: Arc::new(Mutex::new(Shared::default())),
+            history: VecDeque::new(),
+            sample: None,
         }
     }
 
@@ -228,10 +712,25 @@ impl GazeState {
         self.ptr.tracked = false;
         self.dwell.reset();
         self.last_hit = None;
+        self.history.clear();
+        self.sample = None;
     }
 
     /// Feed this frame's raw gaze pose (stage space, -Z forward), or `None` if unavailable/invalid.
     pub fn feed(
+        &mut self,
+        raw: Option<Affine3A>,
+        smoothing: f32,
+        deadzone_deg: f32,
+        dwell_ms: u32,
+        now: Instant,
+    ) {
+        self.sample = None;
+        self.feed_inner(raw, smoothing, deadzone_deg, dwell_ms, now);
+        self.step_check(now);
+    }
+
+    fn feed_inner(
         &mut self,
         raw: Option<Affine3A>,
         smoothing: f32,
@@ -287,15 +786,43 @@ impl GazeState {
         self.last_feed = Some(now);
 
         let raw_dir = rot * Vec3::NEG_Z;
+
+        // gaze click v2: raw direction -> head-relative angles -> + learned correction -> back to stage space
+        let (_, hmd_rot, hmd_pos) = self.hmd.to_scale_rotation_translation();
+        let (ry, rp) = dir_to_angles(hmd_rot.inverse() * raw_dir);
+        self.history.push_back((now, ry, rp));
+        while self
+            .history
+            .front()
+            .is_some_and(|(t, ..)| now.duration_since(*t) > HISTORY)
+        {
+            self.history.pop_front();
+        }
+        let corr_dir = if self.learn && !self.store.correction.is_empty() {
+            let (cy, cp) = self.store.correction.get(ry, rp);
+            let d = hmd_rot * angles_to_dir(ry + cy, rp + cp);
+            if d.is_finite() { d } else { raw_dir }
+        } else {
+            raw_dir
+        };
+        self.sample = Some(CheckSample {
+            t: now,
+            raw: (ry, rp),
+            raw_dir,
+            corr_dir,
+            hmd_rot,
+            hmd_pos,
+        });
+
         let smoothed = match smoothing_params(smoothing) {
             Some((min_cutoff, beta)) => self
                 .filter
-                .filter(raw_dir, dt, min_cutoff, beta)
+                .filter(corr_dir, dt, min_cutoff, beta)
                 .normalize_or_zero(),
-            None => raw_dir,
+            None => corr_dir,
         };
         let smoothed = if smoothed == Vec3::ZERO {
-            raw_dir
+            corr_dir
         } else {
             smoothed
         };
@@ -313,6 +840,202 @@ impl GazeState {
         self.ptr.tracked = true;
         self.active = true;
         self.fresh = true;
+    }
+}
+
+impl GazeState {
+    /// The filtered gaze direction (stage space), if usable.
+    pub fn current_dir(&self) -> Option<Vec3> {
+        self.out_dir.filter(|_| self.active)
+    }
+
+    /// The raw head-relative look at `now`: per-axis median of the raw samples of the last [`LOOK`].
+    pub fn look(&self, now: Instant) -> Option<(f64, f64)> {
+        let (mut y, mut p): (Vec<f64>, Vec<f64>) = self
+            .history
+            .iter()
+            .filter(|(t, ..)| *t <= now && now.duration_since(*t) <= LOOK)
+            .map(|(_, y, p)| (*y, *p))
+            .unzip();
+        (!y.is_empty()).then(|| (median(&mut y), median(&mut p)))
+    }
+
+    /// The current learned correction at a raw head-relative look.
+    fn correction_at(&self, look: (f64, f64)) -> (f64, f64) {
+        self.store.correction.get(look.0, look.1)
+    }
+
+    /// Apply the settings that decide whether lessons are used: call every frame with the config.
+    pub fn sync_config(&mut self, learn: bool, key: &str, hmd: Affine3A) {
+        self.hmd = hmd;
+        self.learn = learn;
+        if learn {
+            self.store.check_key(key);
+        }
+    }
+
+    /// Head-relative angles of a world point as seen from the HMD pose `rot`/`pos`.
+    fn truth_angles(rot: Quat, pos: Vec3, point: Vec3) -> (f64, f64) {
+        dir_to_angles(rot.inverse() * (point - pos))
+    }
+
+    /// A "refine" lesson from a refined gaze click that landed on `hit` (stage space).
+    pub fn record_refine(&mut self, lesson: &RefineLesson, hit: Vec3) {
+        if !self.learn {
+            return;
+        }
+        let Some(look) = lesson.look else {
+            return;
+        };
+        let truth = Self::truth_angles(lesson.hmd_rot0, lesson.hmd_pos0, hit);
+        let (dy, dp) = (truth.0 - look.0, truth.1 - look.1);
+        let (cy, cp) = self.correction_at(look);
+        let left = (dy - cy).hypot(dp - cp);
+        if !left.is_finite() || left > REFINE_MAX_DEG {
+            self.store.refuse();
+            return;
+        }
+        self.store.add(
+            Lesson {
+                time: unix_secs(),
+                hy: look.0,
+                hp: look.1,
+                dy,
+                dp,
+                wy: 1.0,
+                wp: 1.0,
+                how: "refine".into(),
+            },
+            left,
+        );
+    }
+
+    /// A passive "laser" lesson: a controller laser clicked `hit` (stage space) on a screen while the gaze was fresh.
+    /// Taken only if the corrected gaze was within [`LASER_MAX_DEG`] of it; never produces any input.
+    pub fn record_laser(&mut self, hit: Vec3, now: Instant) {
+        if !self.learn || !self.active || !self.fresh {
+            return;
+        }
+        let Some(look) = self.look(now) else {
+            return;
+        };
+        let (_, rot, pos) = self.hmd.to_scale_rotation_translation();
+        let truth = Self::truth_angles(rot, pos, hit);
+        let (cy, cp) = self.correction_at(look);
+        let err = angles_err((look.0 + cy, look.1 + cp), truth);
+        if !err.is_finite() || err > LASER_MAX_DEG {
+            return;
+        }
+        self.store.add(
+            Lesson {
+                time: unix_secs(),
+                hy: look.0,
+                hp: look.1,
+                dy: truth.0 - look.0,
+                dp: truth.1 - look.1,
+                wy: 0.5,
+                wp: 0.5,
+                how: "laser".into(),
+            },
+            err,
+        );
+    }
+
+    /// Finish a gaze check: record the lesson and answer.
+    fn finish_check(&mut self, out: CheckOutcome) -> CheckAnswer {
+        match out {
+            CheckOutcome::Failed(why) => CheckAnswer::failed(why),
+            CheckOutcome::Done { look, truth } => {
+                let (cy, cp) = self.correction_at(look);
+                let before = angles_err((look.0 + cy, look.1 + cp), truth);
+                let (dy, dp) = (truth.0 - look.0, truth.1 - look.1);
+                if !before.is_finite() || (dy - cy).hypot(dp - cp) > CHECK_MAX_DEG {
+                    self.store.refuse();
+                    return CheckAnswer::failed("not steady");
+                }
+                self.store.add(
+                    Lesson {
+                        time: unix_secs(),
+                        hy: look.0,
+                        hp: look.1,
+                        dy,
+                        dp,
+                        wy: 1.0,
+                        wp: 1.0,
+                        how: "check".into(),
+                    },
+                    before,
+                );
+                let (cy, cp) = self.correction_at(look);
+                let after = angles_err((look.0 + cy, look.1 + cp), truth);
+                CheckAnswer {
+                    ok: true,
+                    error_before_deg: Some(before as f32),
+                    error_after_deg: Some(after as f32),
+                    reason: None,
+                }
+            }
+        }
+    }
+
+    fn put_check_result(&mut self, a: CheckAnswer) {
+        if let Ok(mut sh) = self.shared.lock() {
+            sh.check_result = Some(a);
+        }
+    }
+
+    fn step_check(&mut self, now: Instant) {
+        if !self.check.active() {
+            return;
+        }
+        let sample = self.sample.filter(|_| self.fresh);
+        if let Some(out) = self.check.step(now, sample) {
+            let a = self.finish_check(out);
+            self.put_check_result(a);
+        }
+    }
+
+    /// Frame loop: serve what the IPC server left in the mailbox (forget, a new check). `tracking`: any of
+    /// `gaze_laser` / `gaze_target` / `gaze_pointer` is on.
+    pub fn poll_shared(&mut self, tracking: bool, now: Instant) {
+        let (forget, request) = match self.shared.lock() {
+            Ok(mut sh) => (
+                std::mem::take(&mut sh.forget),
+                std::mem::take(&mut sh.check_request),
+            ),
+            Err(_) => return,
+        };
+        if forget {
+            self.store.forget();
+        }
+        if request {
+            if !self.learn {
+                self.put_check_result(CheckAnswer::failed("learning off"));
+            } else if !tracking || !self.active {
+                self.put_check_result(CheckAnswer::failed("no gaze"));
+            } else {
+                let (_, rot, pos) = self.hmd.to_scale_rotation_translation();
+                self.check.start(now, rot, pos);
+            }
+        }
+        if !tracking && self.check.active() {
+            self.check.cancel();
+            self.put_check_result(CheckAnswer::failed("no gaze"));
+        }
+    }
+
+    /// `wayvrctl gaze-learn status`.
+    pub fn learn_status(&self) -> LearnStatus {
+        let (oy, op) = self.store.correction.offset();
+        LearnStatus {
+            enabled: self.learn,
+            lessons: self.store.correction.len() as u32,
+            taken: self.store.taken,
+            refused: self.store.refused,
+            last_error_deg: self.store.last_error_deg.map(|v| v as f32),
+            offset_deg: [oy as f32, op as f32],
+            key: self.store.key.clone(),
+        }
     }
 }
 
@@ -341,6 +1064,24 @@ pub mod gate {
     /// The dwell-click time actually used: 0 (never clicks) while gaze input is off.
     pub const fn dwell_ms(gaze_pointer: bool, dwell_ms: u32) -> u32 {
         if input_on(gaze_pointer) { dwell_ms } else { 0 }
+    }
+
+    /// Hold-to-refine gaze click: only effective through the gaze pointer gate.
+    pub const fn refine(gaze_pointer: bool, gaze_refine: bool) -> bool {
+        input_on(gaze_pointer) && gaze_refine
+    }
+
+    /// Whether the gaze pointer's button is down this frame. The ONLY place a gaze click is decided: with
+    /// `gaze_pointer` off it is `false` for every input; the learning (`gaze_learn`, laser lessons, `gaze-check`)
+    /// has no input here at all.
+    pub const fn pointer_click(
+        gaze_pointer: bool,
+        gaze_refine: bool,
+        trigger: bool,
+        dwell: bool,
+        refine_click: bool,
+    ) -> bool {
+        input_on(gaze_pointer) && if refine(gaze_pointer, gaze_refine) { refine_click } else { trigger || dwell }
     }
 
     /// `wayvrctl gaze` answers with targets (what voice "this" reads) only while gaze input is on.
@@ -393,6 +1134,53 @@ pub mod gate {
             }
         }
 
+        /// Gaze click v2: with the switch off, no combination of learn / refine / laser clicks / gaze-check can make
+        /// the gaze pointer click. The learning has no input to `pointer_click` at all; this also drives the real
+        /// learning paths and checks the pointer state stays unclicked.
+        #[test]
+        fn switch_off_learning_never_clicks() {
+            for refine_cfg in [false, true] {
+                for trigger in [false, true] {
+                    for dwell in [false, true] {
+                        for refine_click in [false, true] {
+                            assert!(!pointer_click(false, refine_cfg, trigger, dwell, refine_click));
+                        }
+                    }
+                }
+                assert!(!refine(false, refine_cfg), "gaze_refine is only effective through gaze_pointer");
+            }
+            // switch on: the old behaviour without refine, the refine state with it
+            assert!(pointer_click(true, false, true, false, false));
+            assert!(pointer_click(true, false, false, true, false));
+            assert!(!pointer_click(true, true, true, true, false), "refine: the trigger alone presses nothing");
+            assert!(pointer_click(true, true, false, false, true));
+
+            use crate::backend::gaze::{GazeState, Shared};
+            use glam::{Affine3A, Quat, Vec3};
+            let mut g = GazeState::new();
+            let t0 = Instant::now();
+            g.sync_config(true, "k", Affine3A::IDENTITY);
+            let p = Affine3A::from_rotation_translation(Quat::from_rotation_y(0.05), Vec3::new(0.0, 1.6, 0.0));
+            for i in 0..80u64 {
+                let q = Affine3A::from_rotation_translation(
+                    Quat::from_rotation_y(0.05 + (i % 3) as f32 * 0.0001),
+                    Vec3::new(0.0, 1.6, 0.0),
+                );
+                g.feed(Some(if i % 2 == 0 { p } else { q }), 0.5, 0.6, 0, t0 + Duration::from_millis(11 * i));
+                // a laser lesson, a check request: nothing may click
+                g.record_laser(Vec3::new(0.0, 1.6, -2.0), t0 + Duration::from_millis(11 * i));
+                if i == 10 {
+                    g.shared.lock().unwrap().check_request = true;
+                }
+                g.poll_shared(true, t0 + Duration::from_millis(11 * i));
+                assert!(!g.ptr.now.click && !g.ptr.before.click);
+            }
+            assert!(g.ptr.now.click == false);
+            let _ = Shared::default();
+            // with the switch off the refine logic is never driven: it stays idle
+            assert!(!g.refine.active());
+        }
+
         #[test]
         fn switch_on_is_the_only_way_in() {
             assert!(may_point(true, true, false, false));
@@ -416,6 +1204,7 @@ pub mod gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::gaze_lessons::Lesson;
 
     fn angle(a: Vec3, b: Vec3) -> f32 {
         a.normalize()
@@ -546,5 +1335,200 @@ mod tests {
             );
         }
         assert!(!g.active);
+    }
+
+    #[test]
+    fn angles_round_trip() {
+        for (y, p) in [(0.0, 0.0), (10.0, -5.0), (-30.0, 20.0), (3.3, 44.0)] {
+            let (y2, p2) = dir_to_angles(angles_to_dir(y, p));
+            assert!((y - y2).abs() < 1e-4 && (p - p2).abs() < 1e-4, "{y},{p} -> {y2},{p2}");
+        }
+        // yaw is positive to the left (-X), pitch positive up
+        assert!(dir_to_angles(Vec3::new(-0.2, 0.0, -1.0)).0 > 0.0);
+        assert!(dir_to_angles(Vec3::new(0.0, 0.2, -1.0)).1 > 0.0);
+    }
+
+    fn head(deg_yaw: f32) -> Quat {
+        Quat::from_rotation_y(deg_yaw.to_radians())
+    }
+
+    /// Run the refine machine at 90 Hz from `t0` for `ms`, the head following `yaw(t_ms)`; returns each frame's out.
+    fn run_refine(
+        r: &mut Refine,
+        t0: Instant,
+        from_ms: u64,
+        to_ms: u64,
+        trigger: impl Fn(u64) -> bool,
+        yaw: impl Fn(u64) -> f32,
+    ) -> Vec<(u64, RefineOut)> {
+        let mut v = Vec::new();
+        let mut ms = from_ms;
+        while ms <= to_ms {
+            let out = r.update(
+                trigger(ms),
+                t0 + Duration::from_millis(ms),
+                head(yaw(ms)),
+                Vec3::ZERO,
+                Some(Vec3::NEG_Z),
+                Some((0.0, 0.0)),
+            );
+            v.push((ms, out));
+            ms += 11;
+        }
+        v
+    }
+
+    #[test]
+    fn refine_tap_clicks_at_the_anchor_once() {
+        let mut r = Refine::default();
+        let t0 = Instant::now();
+        let outs = run_refine(&mut r, t0, 0, 400, |ms| ms < 150, |_| 0.0);
+        let clicks: Vec<_> = outs.iter().filter(|(_, o)| o.click).collect();
+        assert!(!clicks.is_empty());
+        // nothing pressed while held, the dot frozen at the anchor
+        assert!(outs.iter().filter(|(ms, _)| *ms < 150).all(|(_, o)| !o.click && o.dir == Some(Vec3::NEG_Z)));
+        // ~60 ms, at the anchor, no lesson for a tap
+        let span = clicks.last().unwrap().0 - clicks[0].0;
+        assert!((40..=75).contains(&span), "{span}");
+        assert!(clicks.iter().all(|(_, o)| o.dir == Some(Vec3::NEG_Z) && o.lesson.is_none()));
+        assert!(!r.active());
+    }
+
+    #[test]
+    fn refine_release_after_head_movement_clicks_refined_and_records_a_lesson() {
+        let mut r = Refine::default();
+        let t0 = Instant::now();
+        // trigger held 400 ms, head turns 3 deg left meanwhile
+        let outs = run_refine(&mut r, t0, 0, 700, |ms| ms < 400, |ms| (ms.min(300) as f32) / 100.0);
+        let click: Vec<_> = outs.iter().filter(|(_, o)| o.click).collect();
+        assert!(!click.is_empty());
+        let first = click[0].1;
+        let d = first.dir.unwrap();
+        let moved = angle(d, Vec3::NEG_Z);
+        // gain 1 with the 0.5 deg dead zone
+        assert!((moved - 2.5).abs() < 0.2, "{moved}");
+        assert!(first.lesson.is_some(), "a refined click records a lesson");
+        assert_eq!(outs.iter().filter(|(_, o)| o.lesson.is_some()).count(), 1);
+    }
+
+    #[test]
+    fn refine_still_hold_presses_drags_and_releases() {
+        let mut r = Refine::default();
+        let t0 = Instant::now();
+        // trigger held 1.5 s; the head is still the first 0.8 s, then turns 2 deg
+        let outs = run_refine(&mut r, t0, 0, 1800, |ms| ms < 1500, |ms| if ms < 800 { 0.0 } else { (ms - 800).min(200) as f32 / 100.0 });
+        let first_press = outs.iter().find(|(_, o)| o.click).unwrap();
+        assert!((500..=620).contains(&first_press.0), "press at {}", first_press.0);
+        // pressed until the release at 1500
+        assert!(outs.iter().filter(|(ms, _)| *ms > first_press.0 && *ms < 1500).all(|(_, o)| o.click));
+        // dragged by the head
+        let last = outs.iter().rev().find(|(ms, _)| *ms < 1500).unwrap();
+        assert!(angle(last.1.dir.unwrap(), Vec3::NEG_Z) > 1.2);
+        assert!(outs.iter().filter(|(ms, _)| *ms >= 1500).all(|(_, o)| !o.click));
+        assert!(!r.active());
+    }
+
+    #[test]
+    fn refine_moving_head_does_not_press() {
+        let mut r = Refine::default();
+        let t0 = Instant::now();
+        let outs = run_refine(&mut r, t0, 0, 1000, |ms| ms < 2000, |ms| ms as f32 / 200.0);
+        assert!(outs.iter().all(|(_, o)| !o.click));
+    }
+
+    fn sample(t: Instant, raw: (f64, f64), hmd_rot: Quat, hmd_pos: Vec3, err: Vec3) -> CheckSample {
+        let raw_dir = hmd_rot * angles_to_dir(raw.0, raw.1);
+        CheckSample { t, raw, raw_dir, corr_dir: raw_dir + err, hmd_rot, hmd_pos }
+    }
+
+    #[test]
+    fn gaze_check_steady_look_gives_a_lesson_and_a_wobbly_one_fails() {
+        let t0 = Instant::now();
+        let pos = Vec3::new(0.0, 1.6, 0.0);
+        let mut c = GazeCheck::default();
+        c.start(t0, Quat::IDENTITY, pos);
+        assert!((c.target().unwrap() - Vec3::new(0.0, 1.6, -1.5)).length() < 1e-5);
+        // looking 2 deg to the right of the target, steadily
+        let raw = (-2.0, 0.0);
+        let mut out = None;
+        let mut ms = 0;
+        while ms < 3000 && out.is_none() {
+            out = c.step(t0 + Duration::from_millis(ms), Some(sample(t0 + Duration::from_millis(ms), raw, Quat::IDENTITY, pos, Vec3::ZERO)));
+            ms += 11;
+        }
+        let Some(CheckOutcome::Done { look, truth }) = out else { panic!("{out:?}") };
+        assert!(ms > 1000 && ms < 1200, "settle 0.45 + window 0.6, got {ms}");
+        assert_eq!(look, raw);
+        assert!(truth.0.abs() < 1e-3 && truth.1.abs() < 1e-3);
+
+        // wobbling 3 deg: never steady
+        let mut c = GazeCheck::default();
+        c.start(t0, Quat::IDENTITY, pos);
+        let mut out = None;
+        let mut ms = 0u64;
+        while ms < 9000 && out.is_none() {
+            let w = if (ms / 50) % 2 == 0 { 2.0 } else { -2.0 };
+            out = c.step(t0 + Duration::from_millis(ms), Some(sample(t0 + Duration::from_millis(ms), (w, 0.0), Quat::IDENTITY, pos, Vec3::ZERO)));
+            ms += 11;
+        }
+        assert_eq!(out, Some(CheckOutcome::Failed("not steady")));
+
+        // no samples at all
+        let mut c = GazeCheck::default();
+        c.start(t0, Quat::IDENTITY, pos);
+        assert_eq!(c.step(t0 + Duration::from_secs(9), None), Some(CheckOutcome::Failed("no gaze")));
+        // looking elsewhere
+        let mut c = GazeCheck::default();
+        c.start(t0, Quat::IDENTITY, pos);
+        let s = sample(t0, (40.0, 0.0), Quat::IDENTITY, pos, Vec3::ZERO);
+        assert_eq!(c.step(t0, Some(s)), None);
+        assert_eq!(c.step(t0 + Duration::from_secs(9), Some(s)), Some(CheckOutcome::Failed("timed out")));
+    }
+
+    #[test]
+    fn learned_correction_moves_the_gaze_and_forgetting_undoes_it() {
+        let mut g = GazeState::new();
+        g.sync_config(true, "k", Affine3A::IDENTITY);
+        let t0 = Instant::now();
+        let p = Affine3A::from_rotation_translation(Quat::IDENTITY, Vec3::new(0.0, 1.6, 0.0));
+        // the eyes look straight ahead; the truth was 2 deg to the left
+        for i in 0..5 {
+            g.store.add(
+                Lesson { time: 1.0 + f64::from(i), hy: 0.0, hp: 0.0, dy: 2.0, dp: 0.0, wy: 1.0, wp: 1.0, how: "check".into() },
+                0.0,
+            );
+        }
+        g.feed(Some(p), 0.0, 0.0, 0, t0);
+        let d = g.ptr.pose.matrix3 * Vec3A::NEG_Z;
+        let (yaw, _) = dir_to_angles(Vec3::from(d));
+        assert!(yaw > 1.0 && yaw < 2.1, "{yaw}");
+        // learning off: the raw gaze again
+        g.sync_config(false, "k", Affine3A::IDENTITY);
+        g.feed(Some(p), 0.0, 0.0, 0, t0 + Duration::from_millis(11));
+        let d = g.ptr.pose.matrix3 * Vec3A::NEG_Z;
+        assert!(dir_to_angles(Vec3::from(d)).0.abs() < 1e-3);
+        g.sync_config(true, "k", Affine3A::IDENTITY);
+        let st = g.learn_status();
+        assert!(st.enabled && st.lessons == 5 && st.taken == 5 && st.offset_deg[0] > 0.5);
+        g.shared.lock().unwrap().forget = true;
+        g.poll_shared(true, t0);
+        assert_eq!(g.learn_status().lessons, 0);
+    }
+
+    #[test]
+    fn refine_lesson_is_refused_past_20_degrees_and_taken_otherwise() {
+        let mut g = GazeState::new();
+        g.sync_config(true, "k", Affine3A::IDENTITY);
+        let lesson = RefineLesson { look: Some((0.0, 0.0)), hmd_rot0: Quat::IDENTITY, hmd_pos0: Vec3::ZERO };
+        // a point 3 deg to the left at 2 m
+        g.record_refine(&lesson, Vec3::new(-2.0 * 3.0f32.to_radians().tan(), 0.0, -2.0));
+        assert_eq!((g.store.taken, g.store.refused), (1, 0));
+        assert!((g.store.last_error_deg.unwrap() - 3.0).abs() < 0.05);
+        g.record_refine(&lesson, Vec3::new(-2.0, 0.0, -1.0));
+        assert_eq!((g.store.taken, g.store.refused), (1, 1));
+        // learning off: nothing recorded
+        g.sync_config(false, "k", Affine3A::IDENTITY);
+        g.record_refine(&lesson, Vec3::new(-0.1, 0.0, -2.0));
+        assert_eq!((g.store.taken, g.store.refused), (1, 1));
     }
 }
