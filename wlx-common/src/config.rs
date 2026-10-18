@@ -339,9 +339,6 @@ const fn def_gaze_deadzone() -> f32 {
 	0.6
 }
 
-const fn def_click_steady_px() -> f32 {
-	32.0
-}
 
 const fn def_point15() -> f32 {
 	0.15
@@ -734,8 +731,8 @@ pub struct GeneralConfig {
 
 	/// Steady clicks: while a click is held on an overlay and the pointer stays within this many overlay pixels of
 	/// the press point, the press point is reported (no jitter drags). Beyond it the real pointer is followed until
-	/// release. 0 = off.
-	#[serde(default = "def_click_steady_px")]
+	/// release, easing over ~80 ms. 0 = off (default; the omarchyvr app writes 32 when its switch is on).
+	#[serde(default)]
 	pub click_steady_px: f32,
 
 	#[serde(default = "def_one")]

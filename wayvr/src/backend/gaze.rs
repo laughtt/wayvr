@@ -249,6 +249,7 @@ struct Hold {
     pos0: Vec3,
     look: Option<(f64, f64)>,
     moved: bool,
+    ctrl: usize,
     dir: Vec3,
     rots: VecDeque<(Instant, Quat)>,
     lesson_given: bool,
@@ -274,12 +275,27 @@ enum RState {
 #[derive(Debug, Default)]
 pub struct Refine {
     state: RState,
-    prev_trigger: bool,
+    /// Raw controller buttons last frame: a Hold arms only on a rising edge seen after the button was low.
+    prev_buttons: [bool; 2],
 }
 
+/// A refined click teaches only when the refined spot is at least this far (degrees) from the frozen one.
+const REFINE_LESSON_DEG: f32 = 1.0;
+
 impl Refine {
-    pub fn reset(&mut self) {
-        *self = Self::default();
+    /// Gaze unusable (or refine off): drop the state but keep the button memory, so a trigger held across the
+    /// drop never makes a tap later. `buttons`: the raw controller buttons this frame.
+    pub fn observe(&mut self, buttons: [bool; 2]) {
+        self.state = RState::Idle;
+        self.prev_buttons = buttons;
+    }
+
+    /// The controller that owns the Hold / press.
+    pub const fn ctrl(&self) -> Option<usize> {
+        match &self.state {
+            RState::Hold(h) | RState::Pressed(h) => Some(h.ctrl),
+            _ => None,
+        }
     }
 
     /// The refine logic owns the pointer (frozen, refining, pressed or clicking).
@@ -296,23 +312,29 @@ impl Refine {
         h.dir
     }
 
-    /// One frame. `cur_dir`: the corrected and filtered gaze direction (stage space) if usable; `look`: the raw
-    /// head-relative look now.
+    /// One frame. `buttons`: the RAW controller buttons (whether or not the ray hits something); `free`: the
+    /// controller's ray hits nothing, so its trigger may start a Hold. Once a Hold runs, only the button of the
+    /// controller that started it counts, wherever that controller points. `cur_dir`: the corrected and filtered
+    /// gaze direction (stage space) if usable; `look`: the raw head-relative look now. `eye_pos`: the gaze ray origin.
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
-        trigger: bool,
+        buttons: [bool; 2],
+        free: [bool; 2],
         now: Instant,
         hmd_rot: Quat,
-        hmd_pos: Vec3,
+        eye_pos: Vec3,
         cur_dir: Option<Vec3>,
         look: Option<(f64, f64)>,
     ) -> RefineOut {
-        let rising = trigger && !self.prev_trigger;
-        self.prev_trigger = trigger;
+        let hmd_pos = eye_pos;
+        let rising_ctrl = (0..2).find(|&i| buttons[i] && !self.prev_buttons[i] && free[i]);
+        self.prev_buttons = buttons;
         let state = std::mem::take(&mut self.state);
+        let owner_down = |h: &Hold| buttons[h.ctrl];
         match state {
             RState::Idle => {
-                if let (true, Some(anchor)) = (rising, cur_dir) {
+                if let (Some(ctrl), Some(anchor)) = (rising_ctrl, cur_dir) {
                     let h = Hold {
                         t0: now,
                         anchor,
@@ -320,6 +342,7 @@ impl Refine {
                         pos0: hmd_pos,
                         look,
                         moved: false,
+                        ctrl,
                         dir: anchor,
                         rots: VecDeque::from([(now, hmd_rot)]),
                         lesson_given: false,
@@ -347,14 +370,14 @@ impl Refine {
                     hmd_rot0: h.rot0,
                     hmd_pos0: h.pos0,
                 };
-                if !trigger {
+                if !owner_down(&h) {
                     // release before a press: tap = at the anchor, else the refined spot
                     let tap = now.duration_since(h.t0) < REFINE_TAP && !h.moved;
                     let at = if tap { h.anchor } else { dir };
                     let out = RefineOut {
                         dir: Some(at),
                         click: true,
-                        lesson: (h.moved && !tap).then(|| lesson(&h)),
+                        lesson: (!tap && angle_deg(h.anchor, at) >= REFINE_LESSON_DEG).then(|| lesson(&h)),
                     };
                     self.state = RState::Clicking {
                         until: now + REFINE_CLICK,
@@ -373,7 +396,8 @@ impl Refine {
                     let out = RefineOut {
                         dir: Some(dir),
                         click: true,
-                        lesson: (h.moved && !h.lesson_given).then(|| lesson(&h)),
+                        lesson: (angle_deg(h.anchor, dir) >= REFINE_LESSON_DEG && !h.lesson_given)
+                            .then(|| lesson(&h)),
                     };
                     h.lesson_given = true;
                     self.state = RState::Pressed(h);
@@ -386,7 +410,7 @@ impl Refine {
                 }
             }
             RState::Pressed(mut h) => {
-                if !trigger {
+                if !owner_down(&h) {
                     // released: the press ends this frame
                     return RefineOut::default();
                 }
@@ -652,6 +676,8 @@ pub struct GazeState {
     pub learn: bool,
     /// The learned correction and its file.
     pub store: LessonStore,
+    /// Origin of the gaze ray (eye pose translation, stage space) of the last accepted sample.
+    pub eye_pos: Vec3,
     /// Hold-to-refine click state (only driven through `gate::refine`).
     pub refine: Refine,
     /// `wayvrctl gaze-check`.
@@ -694,6 +720,7 @@ impl GazeState {
             } else {
                 LessonStore::load(crate::backend::gaze_lessons::default_path(), unix_secs())
             },
+            eye_pos: Vec3::ZERO,
             refine: Refine::default(),
             check: GazeCheck::default(),
             shared: Arc::new(Mutex::new(Shared::default())),
@@ -788,7 +815,8 @@ impl GazeState {
         let raw_dir = rot * Vec3::NEG_Z;
 
         // gaze click v2: raw direction -> head-relative angles -> + learned correction -> back to stage space
-        let (_, hmd_rot, hmd_pos) = self.hmd.to_scale_rotation_translation();
+        let (_, hmd_rot, _) = self.hmd.to_scale_rotation_translation();
+        self.eye_pos = pos;
         let (ry, rp) = dir_to_angles(hmd_rot.inverse() * raw_dir);
         self.history.push_back((now, ry, rp));
         while self
@@ -811,7 +839,8 @@ impl GazeState {
             raw_dir,
             corr_dir,
             hmd_rot,
-            hmd_pos,
+            // the truth is measured from the gaze ray origin (the eye), not the HMD origin
+            hmd_pos: pos,
         });
 
         let smoothed = match smoothing_params(smoothing) {
@@ -919,8 +948,8 @@ impl GazeState {
         let Some(look) = self.look(now) else {
             return;
         };
-        let (_, rot, pos) = self.hmd.to_scale_rotation_translation();
-        let truth = Self::truth_angles(rot, pos, hit);
+        let (_, rot, _) = self.hmd.to_scale_rotation_translation();
+        let truth = Self::truth_angles(rot, self.eye_pos, hit);
         let (cy, cp) = self.correction_at(look);
         let err = angles_err((look.0 + cy, look.1 + cp), truth);
         if !err.is_finite() || err > LASER_MAX_DEG {
@@ -1082,7 +1111,7 @@ pub mod gate {
         dwell: bool,
         refine_click: bool,
     ) -> bool {
-        input_on(gaze_pointer) && if refine(gaze_pointer, gaze_refine) { refine_click } else { trigger || dwell }
+        input_on(gaze_pointer) && if refine(gaze_pointer, gaze_refine) { refine_click || dwell } else { trigger || dwell }
     }
 
     /// `wayvrctl gaze` answers with targets (what voice "this" reads) only while gaze input is on.
@@ -1154,7 +1183,8 @@ pub mod gate {
             // switch on: the old behaviour without refine, the refine state with it
             assert!(pointer_click(true, false, true, false, false));
             assert!(pointer_click(true, false, false, true, false));
-            assert!(!pointer_click(true, true, true, true, false), "refine: the trigger alone presses nothing");
+            assert!(!pointer_click(true, true, true, false, false), "refine: the trigger alone presses nothing");
+            assert!(pointer_click(true, true, false, true, false), "refine idle: dwell still works");
             assert!(pointer_click(true, true, false, false, true));
 
             let mut g = GazeState::new();
@@ -1196,7 +1226,7 @@ pub mod gate {
             let c: wlx_common::config::GeneralConfig = serde_json::from_str("{}").unwrap();
             assert!(!input_on(c.gaze_pointer) && !c.gaze_over_controllers && c.gaze_dwell_ms == 0);
             assert!(!c.gaze_learn && !c.gaze_refine && c.gaze_learn_key.is_empty());
-            assert!((c.click_steady_px - 32.0).abs() < f32::EPSILON);
+            assert!(c.click_steady_px == 0.0, "steady clicks are off unless the app switches them on");
         }
     }
 }
@@ -1361,11 +1391,25 @@ mod tests {
         trigger: impl Fn(u64) -> bool,
         yaw: impl Fn(u64) -> f32,
     ) -> Vec<(u64, RefineOut)> {
+        run_refine_free(r, t0, from_ms, to_ms, trigger, |_| true, yaw)
+    }
+
+    /// Like `run_refine`, with the "controller 0's ray hits nothing" flag per frame.
+    fn run_refine_free(
+        r: &mut Refine,
+        t0: Instant,
+        from_ms: u64,
+        to_ms: u64,
+        trigger: impl Fn(u64) -> bool,
+        free: impl Fn(u64) -> bool,
+        yaw: impl Fn(u64) -> f32,
+    ) -> Vec<(u64, RefineOut)> {
         let mut v = Vec::new();
         let mut ms = from_ms;
         while ms <= to_ms {
             let out = r.update(
-                trigger(ms),
+                [trigger(ms), false],
+                [free(ms), true],
                 t0 + Duration::from_millis(ms),
                 head(yaw(ms)),
                 Vec3::ZERO,
@@ -1426,6 +1470,52 @@ mod tests {
         assert!(angle(last.1.dir.unwrap(), Vec3::NEG_Z) > 1.2);
         assert!(outs.iter().filter(|(ms, _)| *ms >= 1500).all(|(_, o)| !o.click));
         assert!(!r.active());
+    }
+
+    #[test]
+    fn refine_ray_sweeping_onto_an_overlay_is_not_a_release() {
+        let mut r = Refine::default();
+        let t0 = Instant::now();
+        // the controller ray hits an overlay from 100 ms on, the button stays down until 1500 ms
+        let outs = run_refine_free(&mut r, t0, 0, 1800, |ms| ms < 1500, |ms| ms < 100, |_| 0.0);
+        let first = outs.iter().find(|(_, o)| o.click).unwrap();
+        assert!(first.0 >= 500, "no click before the 0.5 s press, got {}", first.0);
+        assert!(outs.iter().filter(|(ms, _)| *ms > first.0 && *ms < 1500).all(|(_, o)| o.click));
+        assert!(outs.iter().filter(|(ms, _)| *ms >= 1500).all(|(_, o)| !o.click));
+    }
+
+    #[test]
+    fn refine_trigger_held_across_a_gaze_drop_makes_no_tap() {
+        let mut r = Refine::default();
+        let t0 = Instant::now();
+        // the gaze drops while the trigger is held: observe() keeps the button memory
+        r.observe([true, false]);
+        let outs = run_refine(&mut r, t0, 0, 600, |ms| ms < 300, |_| 0.0);
+        assert!(outs.iter().all(|(_, o)| !o.click && o.dir.is_none()), "no Hold, no tap");
+        assert!(!r.active());
+        // a fresh press after the button was low arms normally
+        let outs = run_refine(&mut r, t0, 700, 1000, |ms| ms < 800, |_| 0.0);
+        assert!(outs.iter().any(|(_, o)| o.click));
+    }
+
+    #[test]
+    fn refine_head_jitter_below_one_degree_teaches_nothing() {
+        let mut r = Refine::default();
+        let t0 = Instant::now();
+        // 0.7 deg of head movement: the click is refined (not a tap) but too small to learn from
+        let outs = run_refine(&mut r, t0, 0, 700, |ms| ms < 400, |ms| (ms.min(300) as f32) / 100.0 * 0.7 / 3.0);
+        assert!(outs.iter().any(|(_, o)| o.click));
+        assert!(outs.iter().all(|(_, o)| o.lesson.is_none()));
+    }
+
+    #[test]
+    fn lessons_measure_from_the_eye_not_the_head() {
+        let mut g = GazeState::new();
+        g.sync_config(true, "k", Affine3A::IDENTITY);
+        // the eye is 6 cm right of the head origin; the click landed straight ahead of the eye
+        let lesson = RefineLesson { look: Some((0.0, 0.0)), hmd_rot0: Quat::IDENTITY, hmd_pos0: Vec3::new(0.06, 0.0, 0.0) };
+        g.record_refine(&lesson, Vec3::new(0.06, 0.0, -2.0));
+        assert!(g.store.last_error_deg.unwrap().abs() < 1e-6);
     }
 
     #[test]

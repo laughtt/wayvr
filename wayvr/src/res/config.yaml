@@ -272,8 +272,8 @@
 #gaze_learn_key: ""
 
 ## Steady clicks: while a click is held, pointer jitter within this many overlay pixels reports the press point.
-## 0 = off.
-#click_steady_px: 32.0
+## Beyond it the pointer eases to the real hit over ~80 ms. 0 = off (default).
+#click_steady_px: 0.0
 
 ## OpenXR only. Draw simple semi-transparent hand skeletons (needs XR_EXT_hand_tracking).
 ## Hidden while the runtime reports the hand as untracked. Does nothing without hand tracking.

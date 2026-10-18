@@ -77,6 +77,8 @@ pub struct InputState {
     pub gaze: GazeState,
     /// Steady clicks per pointer slot (`click_steady_px`).
     steady: [crate::backend::click_steady::Steady; 2],
+    /// The gaze pointer's own steady state; swapped with the slot's while the gaze borrows a controller slot.
+    gaze_steady: crate::backend::click_steady::Steady,
     pub picking_focus: FocusPickState,
     processes: Vec<Child>,
     disable_lerp_until: Instant,
@@ -93,6 +95,7 @@ impl InputState {
             handsfree_state: PointerState::default(),
             gaze: GazeState::new(),
             steady: Default::default(),
+            gaze_steady: Default::default(),
             picking_focus: FocusPickState::None,
             disable_lerp_until: Instant::now(),
         }
@@ -668,6 +671,7 @@ const fn swap_gaze(app: &mut AppState, slot: usize) {
     std::mem::swap(&mut p.interaction, &mut g.interaction);
     std::mem::swap(&mut p.tracked, &mut g.tracked);
     std::mem::swap(&mut p.handsfree, &mut g.handsfree);
+    std::mem::swap(&mut input.steady[slot], &mut input.gaze_steady);
 }
 
 /// Stop gaze hovering: send on_left and the click release (if any) to whatever the gaze was on.
@@ -727,10 +731,12 @@ fn interact_gaze<O>(
         .filter(|&s| free(s))
         .or_else(|| (0..2).find(|&i| free(i)));
 
+    let buttons = [app.input_state.pointers[0].now.click, app.input_state.pointers[1].now.click];
     let Some(slot) = slot.filter(|_| usable) else {
         release_gaze(overlays, app);
         app.input_state.gaze.dwell.reset();
-        app.input_state.gaze.refine.reset();
+        // drop the refine state but remember the raw buttons: a trigger held across a gaze drop makes no tap
+        app.input_state.gaze.refine.observe(buttons);
         app.input_state.gaze.last_hit = None;
         return;
     };
@@ -749,12 +755,14 @@ fn interact_gaze<O>(
 
     // hold-to-refine click (gate::refine): the trigger freezes the dot, the head refines it
     let refine_out = if crate::backend::gaze::gate::refine(gaze_pointer, gaze_refine) {
-        let (_, hmd_rot, hmd_pos) = input.hmd.to_scale_rotation_translation();
+        let (_, hmd_rot, _) = input.hmd.to_scale_rotation_translation();
+        let free = [hits[0].0.is_none(), hits[1].0.is_none()];
         let g = &mut app.input_state.gaze;
-        let (cur, look) = (g.current_dir(), g.look(now));
-        g.refine.update(trigger, now, hmd_rot, hmd_pos, cur, look)
+        let (cur, look, eye) = (g.current_dir(), g.look(now), g.eye_pos);
+        // the RAW buttons decide: a ray sweeping onto an overlay during a Hold is not a release
+        g.refine.update(buttons, free, now, hmd_rot, eye, cur, look)
     } else {
-        app.input_state.gaze.refine.reset();
+        app.input_state.gaze.refine.observe(buttons);
         crate::backend::gaze::RefineOut::default()
     };
 
@@ -1143,7 +1151,7 @@ where
                     .frame_meta()
                     .map_or(Vec2::ZERO, |m| Vec2::new(m.extent[0] as f32, m.extent[1] as f32)),
             };
-            steady.apply(down_edge, held, hit.overlay, uv, px_per_uv, steady_px)
+            steady.apply(down_edge, held, hit.overlay, uv, px_per_uv, steady_px, Instant::now())
         } else {
             uv
         };
