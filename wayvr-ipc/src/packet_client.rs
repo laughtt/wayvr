@@ -238,6 +238,11 @@ pub enum PacketClient {
 	WlxScreenNumbers(WlxScreenNumbersParams),
 	/// Place a screen relative to another as seen from the head now; the others make room (appended last)
 	WlxScreenPlace(WlxScreenPlaceParams),
+	/// Read only: desk screen poses and the head pose, answered with `WlxScreensResponse` (appended last)
+	WlxScreens(Serial),
+	/// Locked desk layouts: the layout anchor from the head now (yaw only), the whole layout placed again in front
+	/// of the user, same shape (appended last)
+	WlxDeskRecenter,
 	/// Gaze click v2: status of the learned gaze correction, or (true) forget it first; answered with
 	/// `WlxGazeLearnResponse` (appended last)
 	WlxGazeLearn(Serial, bool),

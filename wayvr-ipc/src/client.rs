@@ -421,6 +421,11 @@ impl WayVRClient {
 		Ok(())
 	}
 
+	pub async fn fn_wlx_desk_recenter(client: WayVRClientMutex) -> anyhow::Result<()> {
+		send_only!(client, &PacketClient::WlxDeskRecenter);
+		Ok(())
+	}
+
 	pub async fn fn_wlx_recenter(client: WayVRClientMutex) -> anyhow::Result<()> {
 		send_only!(client, &PacketClient::WlxRecenter);
 		Ok(())
@@ -497,6 +502,18 @@ impl WayVRClient {
 			serial,
 			&PacketClient::WlxGazeCheck(serial),
 			WlxGazeCheckResponse
+		))
+	}
+
+	pub async fn fn_wlx_screens(
+		client: WayVRClientMutex,
+		serial: Serial,
+	) -> anyhow::Result<packet_server::WlxScreens> {
+		Ok(send_and_wait!(
+			client,
+			serial,
+			&PacketClient::WlxScreens(serial),
+			WlxScreensResponse
 		))
 	}
 

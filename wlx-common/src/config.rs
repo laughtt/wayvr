@@ -477,6 +477,12 @@ pub struct GeneralConfig {
 	#[serde(default)]
 	pub world_lock_out_of_view_reset: bool,
 
+	/// omarchyvr locked layouts (default on): desk screens (desktop captures) cannot be grabbed, moved or resized,
+	/// are never auto-reset, refuse `screen-nudge` / `screen-place`, and `desk-screens` places them around the stored
+	/// layout anchor (`desk-anchor.conf`; set by `desk-recenter`) instead of the head. Off = the old behaviour.
+	#[serde(default = "def_true")]
+	pub desk_locked: bool,
+
 	/// With world_lock_grab: while gripping, stick = push/pull (rate per second, e-fold); resize = two-hand grip.
 	#[serde(default = "def_grab_dist_rate")]
 	pub grab_dist_rate: f32,
@@ -782,5 +788,13 @@ mod omarchyvr_tests {
 		assert!(c.focus_follows_mouse_mode, "hover must not move the cursor unless the user asks");
 		let c: GeneralConfig = serde_json5::from_str("{focus_follows_mouse_mode: false}").unwrap();
 		assert!(!c.focus_follows_mouse_mode, "the app switch turns it back on");
+	}
+
+	#[test]
+	fn desk_screens_are_locked_by_default() {
+		let c: GeneralConfig = serde_json5::from_str("{}").expect("empty config parses");
+		assert!(c.desk_locked);
+		let c: GeneralConfig = serde_json5::from_str("{desk_locked: false}").unwrap();
+		assert!(!c.desk_locked);
 	}
 }

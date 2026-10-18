@@ -163,6 +163,46 @@ pub struct WlxGazeCheck {
 	pub reason: Option<String>,
 }
 
+/// The user's head pose, stage space (metres, degrees). Yaw 0 = looking along -Z, positive = turning right; pitch positive = up.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct WlxScreensHead {
+	pub pos: [f32; 3],
+	pub yaw_deg: f32,
+	pub pitch_deg: f32,
+}
+
+/// One desk screen. `n` is the desk slot number (1 main, 2 left, 3 right, 4 up, 5 up-left, 6 up-right).
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct WlxScreensEntry {
+	pub n: u8,
+	/// Overlay name (the screen's output name, e.g. `PIMAX-MAIN`)
+	pub output: String,
+	pub shown: bool,
+	pub pos: [f32; 3],
+	/// Direction the screen's front looks away from the viewer (-Z axis), same convention as the head
+	pub yaw_deg: f32,
+	pub pitch_deg: f32,
+	/// Displayed width in metres
+	pub width_m: f32,
+	/// 0 = flat
+	pub curvature: f32,
+	/// Head to screen centre, metres
+	pub distance_m: f32,
+	/// Horizontal angle from the head's forward to the screen centre, degrees, + = right, -180..180
+	pub bearing_deg: f32,
+	/// Vertical angle of the screen centre relative to the head's forward pitch, degrees, + = above
+	pub elevation_deg: f32,
+}
+
+/// Answer to `WlxScreens` (read only).
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct WlxScreens {
+	/// False until WayVR has had a head pose from the runtime (head is then the identity at the origin)
+	pub head_valid: bool,
+	pub head: WlxScreensHead,
+	pub screens: Vec<WlxScreensEntry>,
+}
+
 // "Wvr" prefixes are WayVR-specific
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,6 +217,8 @@ pub enum PacketServer {
 	WvrStateChanged(WvrStateChanged),
 	/// Appended last: no protocol bump needed
 	WlxGazeResponse(Serial, WlxGaze),
+	/// Appended last: no protocol bump needed
+	WlxScreensResponse(Serial, WlxScreens),
 	WlxGazeLearnResponse(Serial, WlxGazeLearn),
 	WlxGazeCheckResponse(Serial, WlxGazeCheck),
 }
@@ -193,6 +235,7 @@ impl PacketServer {
 			PacketServer::WvrProcessListResponse(serial, _) => Some(serial),
 			PacketServer::WvrStateChanged(_) => None,
 			PacketServer::WlxGazeResponse(serial, _) => Some(serial),
+			PacketServer::WlxScreensResponse(serial, _) => Some(serial),
 			PacketServer::WlxGazeLearnResponse(serial, _) => Some(serial),
 			PacketServer::WlxGazeCheckResponse(serial, _) => Some(serial),
 		}

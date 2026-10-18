@@ -6,6 +6,7 @@ pub mod keyboard;
 pub mod passthrough;
 pub mod screen;
 pub mod screen_numbers;
+pub mod screens_query;
 pub mod toast;
 pub mod watch;
 pub mod wayvr;

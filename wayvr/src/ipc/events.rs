@@ -59,10 +59,17 @@ fn desk_layout<O>(
         .collect();
     ids.sort_by_key(|(rank, _)| *rank); // stable: keeps the creation order inside a category
     let n = if p.screens == 0 { ids.len() } else { (p.screens as usize).min(ids.len()) };
-    let hmd = app.input_state.hmd;
     let curvature = p.curvature.clamp(0.0, 1.0);
     let width = if p.width.is_finite() { p.width.clamp(0.3, crate::windowing::grabmath::DESK_MAX_WIDTH) } else { 2.0 };
     let distance = if p.distance.is_finite() { p.distance.clamp(0.4, crate::windowing::grabmath::DESK_MAX_DISTANCE) } else { 2.5 };
+    // locked layouts: the arc stands at the layout anchor (not where the head looks now), with this size kept
+    let hmd = if app.session.config.desk_locked {
+        use crate::windowing::desklock;
+        desklock::set_geometry(desklock::Geometry { width, distance, curvature });
+        desklock::session_anchor(&app.input_state.hmd).transform()
+    } else {
+        app.input_state.hmd
+    };
     log::info!("desk layout: {n} of {} screens, curvature {curvature}, width {width} m, distance {distance} m", ids.len());
     for (i, (_, id)) in ids.into_iter().enumerate() {
         if i >= n {
@@ -128,12 +135,29 @@ fn desk_screens<O>(
         p.place,
     );
 
-    let hmd = app.input_state.hmd;
-    let pivot = Vec3A::from(hmd.translation);
     let curvature = if p.curvature.is_finite() { p.curvature.clamp(0.0, 1.0) } else { 0.0 };
     let width = if p.width.is_finite() { p.width.clamp(0.3, crate::windowing::grabmath::DESK_MAX_WIDTH) } else { 2.0 };
     let distance = if p.distance.is_finite() { p.distance.clamp(0.4, crate::windowing::grabmath::DESK_MAX_DISTANCE) } else { 2.5 };
     let gap = if p.gap.is_finite() { p.gap.clamp(0.0, 1.0) } else { 0.05 };
+    // Locked layouts (desklock): every shown screen goes to its slot of the layout around the stored anchor, with
+    // the geometry of the last placing call (a show/hide-only call keeps the size); nothing is built around the head
+    // and nothing keeps a pose of its own. Unlocked: the old rules below (head, screens where the user put them).
+    let locked = app.session.config.desk_locked;
+    let (hmd, width, distance, curvature) = if locked {
+        use crate::windowing::desklock;
+        let g = if p.place {
+            let g = desklock::Geometry { width, distance, curvature };
+            desklock::set_geometry(g);
+            g
+        } else {
+            desklock::geometry()
+        };
+        desklock::remember(&p);
+        (desklock::session_anchor(&app.input_state.hmd).transform(), g.width, g.distance, g.curvature)
+    } else {
+        (app.input_state.hmd, width, distance, curvature)
+    };
+    let pivot = Vec3A::from(hmd.translation);
 
     // names -> (id, slot, visible, was active before this call)
     let mut listed: Vec<(OverlayID, WlxDeskSlot, bool, bool)> = Vec::new();
@@ -211,7 +235,7 @@ fn desk_screens<O>(
             toggle(app, id, ToggleMode::EnsureOff);
             hidden += 1;
         }
-        items.push(Item { id, slot: vslot(slot), visible, place: visible && (p.place || !was_active || cur.is_none()), cur, meta });
+        items.push(Item { id, slot: vslot(slot), visible, place: visible && (locked || p.place || !was_active || cur.is_none()), cur, meta });
     }
 
     let main_item = items.iter().find(|i| i.slot == VSlot::Main && i.visible);
@@ -254,7 +278,8 @@ fn desk_screens<O>(
     }
     let mut screens: Vec<VScreen> = vis.iter().map(|v| v.2).collect();
     let fixed: Vec<bool> = vis.iter().map(|v| !v.1).collect();
-    let pushed = viewlayout::resolve(&mut screens, &fixed, pivot, margin);
+    // locked: the table's layout as it is (default_layout never overlaps); unlocked: the others make room
+    let pushed = if locked { Vec::new() } else { viewlayout::resolve(&mut screens, &fixed, pivot, margin) };
     for (k, (id, place, _)) in vis.iter().enumerate() {
         if *place || pushed.contains(&k) {
             set_pose(app, *id, screens[k].t);
@@ -278,10 +303,11 @@ fn desk_screens<O>(
         }
     }
     log::info!(
-        "desk screens: {shown} shown, {hidden} hidden of {} listed (place {}, hide_others {}, width {width} m, distance {distance} m, curvature {curvature}, gap {gap} m)",
+        "desk screens: {shown} shown, {hidden} hidden of {} listed (place {}, hide_others {}, width {width} m, distance {distance} m, curvature {curvature}, gap {gap} m{})",
         p.screens.len(),
         p.place,
-        p.hide_others
+        p.hide_others,
+        if locked { ", locked: around the layout anchor" } else { "" }
     );
 }
 
@@ -399,6 +425,9 @@ fn screen_nudge<O>(
         WlxNudgeDir::Bigger => grabmath::NudgeDir::Bigger,
         WlxNudgeDir::Smaller => grabmath::NudgeDir::Smaller,
     };
+    if refuse_locked(app, overlays, all[idx].0, "screen nudge", &p.name) {
+        return;
+    }
     let pivot = Vec3A::from(app.input_state.hmd.translation);
     let s = all[idx].2;
     let nt = grabmath::nudge(&s.t, s.size, pivot, dir, p.step);
@@ -436,6 +465,11 @@ fn screen_place<O>(
         log::warn!("screen place: no shown screen/panel named '{}'", p.name);
         return;
     };
+    if refuse_locked(app, overlays, all[idx].0, "screen place", &p.name)
+        || p.of.as_deref().and_then(find).is_some_and(|r| refuse_locked(app, overlays, all[r].0, "screen place", &all[r].1))
+    {
+        return;
+    }
     let reference = match p.of.as_deref() {
         Some(o) => match find(o) {
             Some(r) => Some(r),
@@ -467,6 +501,38 @@ fn screen_place<O>(
     crate::overlays::screen_numbers::note_screen_moved(&p.name);
     for k in moved {
         set_screen_pose(app, all[k].0, screens[k].t);
+    }
+}
+
+/// Locked layouts: a desk screen refuses to be nudged or placed by a command (one log line; the voice says it).
+fn refuse_locked<O>(app: &AppState, overlays: &mut OverlayWindowManager<O>, id: crate::windowing::OverlayID, what: &str, name: &str) -> bool
+where
+    O: Default,
+{
+    let cat = overlays.mut_by_id(id).map(|o| o.config.category);
+    let locked = cat.is_some_and(|c| crate::windowing::desklock::locked(app.session.config.desk_locked, c));
+    if locked {
+        log::info!("{what}: '{name}' refused: the desk screens are locked (desk_locked); use a layout or desk-recenter");
+    }
+    locked
+}
+
+/// `WlxDeskRecenter` (and Reset screens while locked): the layout anchor from the head now (yaw only), then the
+/// last `desk-screens` listing placed again around it, so the whole layout keeps its shape and comes in front of
+/// the user. Without a listing yet (a single desktop screen): the shown screens in the default layout around it.
+pub(crate) fn desk_recenter<O>(app: &mut AppState, overlays: &mut OverlayWindowManager<O>)
+where
+    O: Default,
+{
+    use crate::windowing::desklock;
+    desklock::recenter(&app.input_state.hmd);
+    match desklock::last_listing() {
+        Some(p) => desk_screens(app, overlays, p),
+        None => {
+            let g = desklock::geometry();
+            let head = desklock::session_anchor(&app.input_state.hmd).transform();
+            overlays.reset_screens_at(app, &head, g.width, g.distance);
+        }
     }
 }
 
@@ -570,6 +636,7 @@ where
 {
     desk_housekeeping(app, _overlays);
     crate::overlays::screen_numbers::tick(app, _overlays);
+    crate::overlays::screens_query::tick(app, _overlays);
 
     while let Some(signal) = app.wayvr_signals.read() {
         match signal {
@@ -591,6 +658,7 @@ where
                 app.tasks
                     .enqueue(TaskType::Overlay(OverlayTask::ResetScreens));
             }
+            WayVRSignal::DeskRecenter => desk_recenter(app, _overlays),
             WayVRSignal::Recenter => {
                 app.tasks.enqueue(TaskType::Playspace(
                     crate::backend::task::PlayspaceTask::Recenter,

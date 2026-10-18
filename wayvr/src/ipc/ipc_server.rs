@@ -443,6 +443,9 @@ impl Connection {
             PacketClient::WlxResetScreens => {
                 params.signals.send(WayVRSignal::ResetScreens);
             }
+            PacketClient::WlxDeskRecenter => {
+                params.signals.send(WayVRSignal::DeskRecenter);
+            }
             PacketClient::WlxRecenter => {
                 params.signals.send(WayVRSignal::Recenter);
             }
@@ -514,6 +517,13 @@ impl Connection {
                     sh.check_result = None;
                 }
                 self.pending_check = Some((serial, std::time::Instant::now()));
+            }
+            PacketClient::WlxScreens(serial) => {
+                let report = crate::overlays::screens_query::report();
+                send_packet(
+                    &mut self.conn,
+                    &ipc::data_encode(&PacketServer::WlxScreensResponse(serial, report)),
+                )?;
             }
             PacketClient::WlxGazeLaser(on) => {
                 params.signals.send(WayVRSignal::GazeLaser(on));

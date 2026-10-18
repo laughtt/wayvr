@@ -934,8 +934,17 @@ where
         );
     }
 
-    // grab
-    if grab_start && hovered_state.grabbable {
+    // grab (locked layouts: never a desk screen; the pointer still clicks and scrolls it)
+    if grab_start
+        && hovered_state.grabbable
+        && crate::windowing::desklock::locked(app.session.config.desk_locked, hovered.config.category)
+    {
+        log::debug!("Hand {idx}: {} is locked (desk_locked), not grabbed", hovered.config.name);
+    }
+    if grab_start
+        && hovered_state.grabbable
+        && !crate::windowing::desklock::locked(app.session.config.desk_locked, hovered.config.category)
+    {
         update_focus(app, hovered.config.input_focus);
         start_grab(StartGrabParams {
             idx,
