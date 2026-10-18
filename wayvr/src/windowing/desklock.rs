@@ -128,15 +128,39 @@ impl Stored {
     }
 }
 
+/// Is there a head pose yet? Before the runtime reports the first one the HMD pose is exactly identity
+/// (screens_query treats it the same way: no head).
+pub fn head_known(hmd: &Affine3A) -> bool {
+    *hmd != Affine3A::IDENTITY && hmd.is_finite()
+}
+
+/// Where a placement's anchor came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    /// The session's anchor (set by its first real placement or a recenter).
+    Session,
+    /// The stored anchor, the head is near it: it becomes the session's anchor.
+    Stored,
+    /// Made from the head now: it becomes the session's anchor and is saved.
+    Fresh,
+    /// No head pose yet (identity): a stand-in for this placement only (the stored anchor, else straight ahead of
+    /// the origin). Never saved, never the session's anchor; the layout is placed again at the first real pose.
+    Provisional,
+}
+
 /// The anchor for a placement now: the session's anchor once it is set; at the first placement of a session the
-/// stored one when the head is near it, else one from the head (`fresh` = it was made now and must be saved).
-pub fn anchor_for(session: Option<Anchor>, stored: Option<Anchor>, hmd: &Affine3A) -> (Anchor, bool) {
+/// stored one when the head is near it, else one from the head ([`Pick::Fresh`] = it was made now and must be
+/// saved). Without a head pose yet nothing is decided ([`Pick::Provisional`]).
+pub fn anchor_for(session: Option<Anchor>, stored: Option<Anchor>, hmd: &Affine3A) -> (Anchor, Pick) {
     if let Some(a) = session {
-        return (a, false);
+        return (a, Pick::Session);
+    }
+    if !head_known(hmd) {
+        return (stored.unwrap_or(Anchor { yaw: 0.0, pos: Vec3A::ZERO }), Pick::Provisional);
     }
     match stored {
-        Some(a) if a.usable_from(hmd) => (a, false),
-        _ => (Anchor::from_head(hmd), true),
+        Some(a) if a.usable_from(hmd) => (a, Pick::Stored),
+        _ => (Anchor::from_head(hmd), Pick::Fresh),
     }
 }
 
@@ -147,11 +171,13 @@ struct State {
     stored: Stored,
     /// Set by the first placement of this session (or a recenter); never changes by itself after that.
     session: Option<Anchor>,
+    /// A placement used a provisional anchor (no head pose yet): place the layout again at the first real pose.
+    replace_pending: bool,
     /// The last `desk-screens` listing (for a recenter: the same screens, shown and hidden, placed again).
     last: Option<wayvr_ipc::packet_client::WlxDeskScreensParams>,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { loaded: false, stored: Stored { anchor: None, geometry: Geometry { width: 1.6, distance: 2.0, curvature: 0.0 } }, session: None, last: None });
+static STATE: Mutex<State> = Mutex::new(State { loaded: false, stored: Stored { anchor: None, geometry: Geometry { width: 1.6, distance: 2.0, curvature: 0.0 } }, session: None, replace_pending: false, last: None });
 
 fn path() -> PathBuf {
     wlx_common::config_io::get_config_root().join(FILE_NAME)
@@ -183,30 +209,73 @@ fn write_atomic(p: &Path, text: &str) -> std::io::Result<()> {
     std::fs::rename(tmp, p)
 }
 
-/// The anchor to place the layout around now (see [`anchor_for`]); a new one is saved.
+/// The anchor to place the layout around now (see [`anchor_for`]); a new one is saved. Without a head pose yet
+/// the anchor is provisional: not kept, not saved, and [`replace_due`] asks for a new placement later.
 pub fn session_anchor(hmd: &Affine3A) -> Anchor {
     let mut st = STATE.lock().unwrap();
     load(&mut st);
-    let (a, fresh) = anchor_for(st.session, st.stored.anchor, hmd);
-    if st.session.is_none() {
-        if fresh {
-            log::info!("desk lock: new layout anchor in front of the head (yaw {:.1} deg){}", a.yaw.to_degrees(), if st.stored.anchor.is_some() { " (the stored one is far from the head)" } else { "" });
-        } else {
-            log::info!("desk lock: layout anchor from the last session (yaw {:.1} deg)", a.yaw.to_degrees());
-        }
-    }
-    st.session = Some(a);
-    if fresh {
-        st.stored.anchor = Some(a);
+    let (a, save_now) = st.place(hmd);
+    if save_now {
         save(&st.stored);
     }
     a
+}
+
+impl State {
+    /// The session logic of [`session_anchor`] without the file: the anchor, and whether `stored` must be saved.
+    fn place(&mut self, hmd: &Affine3A) -> (Anchor, bool) {
+        let (a, pick) = anchor_for(self.session, self.stored.anchor, hmd);
+        match pick {
+            Pick::Session => {}
+            Pick::Provisional => {
+                if !self.replace_pending {
+                    log::info!("desk lock: no head pose yet; screens placed provisionally, the layout anchor is set at the first real pose");
+                }
+                self.replace_pending = true;
+                return (a, false);
+            }
+            Pick::Fresh => log::info!("desk lock: new layout anchor in front of the head (yaw {:.1} deg){}", a.yaw.to_degrees(), if self.stored.anchor.is_some() { " (the stored one is far from the head)" } else { "" }),
+            Pick::Stored => log::info!("desk lock: layout anchor from the last session (yaw {:.1} deg)", a.yaw.to_degrees()),
+        }
+        self.session = Some(a);
+        if pick == Pick::Fresh {
+            self.stored.anchor = Some(a);
+            return (a, true);
+        }
+        (a, false)
+    }
+
+    /// See [`replace_due`].
+    fn replace_due(&mut self, hmd: &Affine3A) -> bool {
+        if self.replace_pending && head_known(hmd) {
+            self.replace_pending = false;
+            return true;
+        }
+        false
+    }
+}
+
+/// Once per provisional placement: true at the first tick with a real head pose (the caller places the layout
+/// again, which sets and saves the session's anchor from that pose).
+pub fn replace_due(hmd: &Affine3A) -> bool {
+    let due = STATE.lock().unwrap().replace_due(hmd);
+    if due {
+        log::info!("desk lock: first head pose, placing the layout again");
+    }
+    due
 }
 
 /// `desk-recenter`: the anchor from the head now, saved.
 pub fn recenter(hmd: &Affine3A) -> Anchor {
     let mut st = STATE.lock().unwrap();
     load(&mut st);
+    if !head_known(hmd) {
+        // no head pose yet: nothing to recenter on; the first real pose places the layout
+        st.replace_pending = true;
+        let (a, _) = anchor_for(st.session, st.stored.anchor, hmd);
+        log::info!("desk lock: recenter before the first head pose, deferred");
+        return a;
+    }
     let a = Anchor::from_head(hmd);
     st.session = Some(a);
     st.stored.anchor = Some(a);
@@ -293,18 +362,47 @@ mod tests {
     fn a_stored_anchor_is_used_only_from_the_same_seat() {
         let stored = Anchor { yaw: 0.7, pos: Vec3A::new(0.0, 1.6, 0.0) };
         // the user sits down again, looking elsewhere: the layout comes back where it was (not where they look)
-        let (a, fresh) = anchor_for(None, Some(stored), &head(-80.0, 0.0, 0.0, Vec3::new(0.3, 1.5, 0.2)));
-        assert_eq!((a, fresh), (stored, false));
+        let (a, pick) = anchor_for(None, Some(stored), &head(-80.0, 0.0, 0.0, Vec3::new(0.3, 1.5, 0.2)));
+        assert_eq!((a, pick), (stored, Pick::Stored));
         // another room / the tracking origin moved: from the head, saved
         let h = head(-80.0, 0.0, 0.0, Vec3::new(4.0, 1.6, 0.0));
-        let (a, fresh) = anchor_for(None, Some(stored), &h);
-        assert!(fresh && (a.yaw.to_degrees() + 80.0).abs() < 0.01);
-        assert!(anchor_for(None, Some(stored), &head(0.0, 0.0, 0.0, Vec3::new(0.0, 3.0, 0.0))).1, "1.4 m higher");
+        let (a, pick) = anchor_for(None, Some(stored), &h);
+        assert!(pick == Pick::Fresh && (a.yaw.to_degrees() + 80.0).abs() < 0.01);
+        assert_eq!(anchor_for(None, Some(stored), &head(0.0, 0.0, 0.0, Vec3::new(0.0, 3.0, 0.0))).1, Pick::Fresh, "1.4 m higher");
         // first ever start: from the head
-        assert!(anchor_for(None, None, &h).1);
+        assert_eq!(anchor_for(None, None, &h).1, Pick::Fresh);
         // once the session has one it never changes by itself, wherever the head goes
-        let (a, fresh) = anchor_for(Some(stored), None, &head(170.0, 40.0, 0.0, Vec3::new(9.0, 0.0, 9.0)));
-        assert_eq!((a, fresh), (stored, false));
+        let (a, pick) = anchor_for(Some(stored), None, &head(170.0, 40.0, 0.0, Vec3::new(9.0, 0.0, 9.0)));
+        assert_eq!((a, pick), (stored, Pick::Session));
+    }
+
+    #[test]
+    fn no_anchor_is_set_or_saved_before_the_first_head_pose() {
+        let id = Affine3A::IDENTITY;
+        assert!(!head_known(&id));
+        let mut st = State { loaded: true, stored: Stored::default(), session: None, replace_pending: false, last: None };
+        // first ever start, WayVR places the screens before Monado reports a head: provisional, nothing kept
+        let (a, save) = st.place(&id);
+        assert_eq!((a.yaw, a.pos, save), (0.0, Vec3A::ZERO, false));
+        assert_eq!((st.session, st.stored.anchor), (None, None));
+        assert!(st.replace_pending);
+        // a second placement still without a head: still nothing kept
+        assert!(!st.place(&id).1 && st.session.is_none());
+        assert!(!st.replace_due(&id), "no re-place while the head is unknown");
+        // the first real pose: re-place once, and that placement sets and saves the anchor from the head
+        let h = head(30.0, 0.0, 0.0, Vec3::new(0.2, 1.6, 0.1));
+        assert!(st.replace_due(&h));
+        assert!(!st.replace_due(&h), "only once");
+        let (a, save) = st.place(&h);
+        assert!(save && (a.yaw.to_degrees() - 30.0).abs() < 0.01 && st.session == Some(a) && st.stored.anchor == Some(a));
+        // with a stored anchor and no head yet: the stored one is used provisionally, not adopted
+        let stored = Anchor { yaw: 0.7, pos: Vec3A::new(0.0, 1.6, 0.0) };
+        let mut st = State { loaded: true, stored: Stored { anchor: Some(stored), geometry: Geometry::default() }, session: None, replace_pending: false, last: None };
+        assert_eq!(st.place(&id), (stored, false));
+        assert!(st.session.is_none() && st.replace_pending);
+        assert!(st.replace_due(&h));
+        assert_eq!(st.place(&h), (stored, false), "the head is near it: the stored anchor becomes the session's");
+        assert_eq!(st.session, Some(stored));
     }
 
     #[test]

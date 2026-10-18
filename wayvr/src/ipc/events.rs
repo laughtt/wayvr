@@ -526,6 +526,16 @@ where
 {
     use crate::windowing::desklock;
     desklock::recenter(&app.input_state.hmd);
+    desk_place_again(app, overlays);
+}
+
+/// The last `desk-screens` listing placed again around the layout anchor (a recenter, or the first real head pose
+/// after a provisional placement). Without a listing yet: the shown screens in the default layout around it.
+fn desk_place_again<O>(app: &mut AppState, overlays: &mut OverlayWindowManager<O>)
+where
+    O: Default,
+{
+    use crate::windowing::desklock;
     match desklock::last_listing() {
         Some(p) => desk_screens(app, overlays, p),
         None => {
@@ -634,6 +644,10 @@ pub fn tick_events<O>(
 where
     O: Default,
 {
+    // locked layouts placed before the first head pose (identity): place them again, once, at the first real pose
+    if app.session.config.desk_locked && crate::windowing::desklock::replace_due(&app.input_state.hmd) {
+        desk_place_again(app, _overlays);
+    }
     desk_housekeeping(app, _overlays);
     crate::overlays::screen_numbers::tick(app, _overlays);
     crate::overlays::screens_query::tick(app, _overlays);
